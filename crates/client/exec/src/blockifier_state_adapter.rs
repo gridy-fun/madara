@@ -1,10 +1,11 @@
-use blockifier::execution::contract_class::ContractClass;
+use blockifier::execution::contract_class::RunnableCompiledClass;
 use blockifier::state::errors::StateError;
 use blockifier::state::state_api::{StateReader, StateResult};
 use mc_db::db_block_id::DbBlockId;
 use mc_db::MadaraBackend;
 use mp_class::ClassInfo;
 use mp_convert::ToFelt;
+use starknet_api::contract_class::ContractClass as ApiContractClass;
 use starknet_api::core::{ChainId, ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
 use starknet_types_core::felt::Felt;
@@ -104,7 +105,7 @@ impl StateReader for BlockifierStateAdapter {
         ))
     }
 
-    fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
+    fn get_compiled_class(&self, class_hash: ClassHash) -> StateResult<RunnableCompiledClass> {
         tracing::debug!("get_compiled_contract_class for {:#x}", class_hash.to_felt());
 
         let Some(on_top_of_block_id) = self.on_top_of_block_id else {
@@ -138,11 +139,17 @@ impl StateReader for BlockifierStateAdapter {
                     )))?;
 
                 // TODO: convert ClassCompilationError to StateError
-                Ok(compiled_class.to_blockifier_class().map_err(|e| StateError::StateReadError(e.to_string()))?)
+                Ok(RunnableCompiledClass::try_from(ApiContractClass::V1(
+                    compiled_class.to_casm().map_err(|e| StateError::StateReadError(e.to_string()))?,
+                ))?)
             }
             ClassInfo::Legacy(info) => {
                 // TODO: convert ClassCompilationError to StateError
-                Ok(info.contract_class.to_blockifier_class().map_err(|e| StateError::StateReadError(e.to_string()))?)
+                Ok(RunnableCompiledClass::try_from(ApiContractClass::V0(
+                    info.contract_class
+                        .to_starknet_api_no_abi()
+                        .map_err(|e| StateError::StateReadError(e.to_string()))?,
+                ))?)
             }
         }
     }

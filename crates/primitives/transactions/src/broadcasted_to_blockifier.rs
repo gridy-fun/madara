@@ -3,7 +3,6 @@ use crate::{
     L1HandlerTransaction, Transaction, TransactionWithHash,
 };
 use blockifier::{
-    execution::contract_class::ClassInfo as BClassInfo, execution::errors::ContractClassError,
     transaction::errors::TransactionExecutionError, transaction::transaction_execution::Transaction as BTransaction,
 };
 use mp_chain_config::StarknetVersion;
@@ -11,7 +10,10 @@ use mp_class::{
     class_hash, compile::ClassCompilationError, CompressedLegacyContractClass, ConvertedClass, FlattenedSierraClass,
     LegacyClassInfo, LegacyConvertedClass, SierraClassInfo, SierraConvertedClass,
 };
-use starknet_api::transaction::{Fee, TransactionHash};
+use starknet_api::contract_class::ClassInfo as ApiClassInfo;
+use starknet_api::contract_class::ContractClass as ApiContractClass;
+use starknet_api::contract_class::SierraVersion;
+use starknet_api::transaction::{fields::Fee, TransactionHash};
 use starknet_types_core::felt::Felt;
 use starknet_types_rpc::{BroadcastedDeclareTxn, BroadcastedTxn};
 use std::sync::Arc;
@@ -124,8 +126,6 @@ pub enum BroadcastedToBlockifierError {
     ConvertToTxApiError(#[from] TransactionApiError),
     #[error("Failed to convert transaction to blockifier: {0}")]
     ConvertTxBlockifierError(#[from] TransactionExecutionError),
-    #[error("Failed to convert contract class: {0}")]
-    ConvertContractClassError(#[from] ContractClassError),
     #[error("Compiled class hash mismatch: expected {expected}, actual {compilation}")]
     CompiledClassHashMismatch { expected: Felt, compilation: Felt },
     #[error("Failed to convert base64 program to cairo program: {0}")]
@@ -135,13 +135,19 @@ pub enum BroadcastedToBlockifierError {
 #[allow(clippy::type_complexity)]
 fn handle_class_legacy(
     contract_class: Arc<CompressedLegacyContractClass>,
-) -> Result<(Option<BClassInfo>, Option<ConvertedClass>, Option<Felt>), BroadcastedToBlockifierError> {
+) -> Result<(Option<ApiClassInfo>, Option<ConvertedClass>, Option<Felt>), BroadcastedToBlockifierError> {
     let class_hash = contract_class.compute_class_hash()?;
     tracing::debug!("Computed legacy class hash: {:?}", class_hash);
-    let class_blockifier =
-        contract_class.to_blockifier_class().map_err(BroadcastedToBlockifierError::CompilationFailed)?;
+    let class_api = ApiContractClass::V0(
+        contract_class.to_starknet_api_no_abi().map_err(BroadcastedToBlockifierError::CompilationFailed)?,
+    );
     Ok((
-        Some(BClassInfo::new(&class_blockifier, 0, 0)?),
+        Some(ApiClassInfo {
+            contract_class: class_api,
+            sierra_program_length: 0,
+            abi_length: 0,
+            sierra_version: SierraVersion::zero(),
+        }),
         Some(ConvertedClass::Legacy(LegacyConvertedClass { class_hash, info: LegacyClassInfo { contract_class } })),
         Some(class_hash),
     ))
@@ -151,9 +157,14 @@ fn handle_class_legacy(
 fn handle_class_sierra(
     contract_class: Arc<FlattenedSierraClass>,
     expected_compiled_class_hash: Felt,
-) -> Result<(Option<BClassInfo>, Option<ConvertedClass>, Option<Felt>), BroadcastedToBlockifierError> {
+) -> Result<(Option<ApiClassInfo>, Option<ConvertedClass>, Option<Felt>), BroadcastedToBlockifierError> {
+    let sierra_program_length = contract_class.program_length();
+    let abi_length = contract_class.abi_length();
+    let sierra_version = contract_class.sierra_version()?;
     let class_hash = contract_class.compute_class_hash()?;
     let (compiled_class_hash, compiled) = contract_class.compile_to_casm()?;
+    let json_compiled = (&compiled).try_into()?;
+    let class_api = ApiContractClass::V1(compiled);
     if expected_compiled_class_hash != compiled_class_hash {
         return Err(BroadcastedToBlockifierError::CompiledClassHashMismatch {
             expected: expected_compiled_class_hash,
@@ -161,15 +172,11 @@ fn handle_class_sierra(
         });
     }
     Ok((
-        Some(BClassInfo::new(
-            &compiled.to_blockifier_class()?,
-            contract_class.sierra_program.len(),
-            contract_class.abi.len(),
-        )?),
+        Some(ApiClassInfo { contract_class: class_api, sierra_program_length, abi_length, sierra_version }),
         Some(ConvertedClass::Sierra(SierraConvertedClass {
             class_hash,
             info: SierraClassInfo { contract_class, compiled_class_hash },
-            compiled: Arc::new(compiled),
+            compiled: Arc::new(json_compiled),
         })),
         Some(class_hash),
     ))

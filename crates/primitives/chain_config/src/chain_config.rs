@@ -47,21 +47,36 @@ pub mod public_key {
     pub const SEPOLIA_INTEGRATION: &str = "0x4e4856eb36dbd5f4a7dca29f7bb5232974ef1fb7eb5b597c58077174c294da1";
 }
 
-const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_0: &[u8] = include_bytes!("../resources/versioned_constants_13_0.json");
-const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1: &[u8] = include_bytes!("../resources/versioned_constants_13_1.json");
+const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_0: &[u8] =
+    include_bytes!("../resources/versioned_constants_0_13_0.json");
+const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1: &[u8] =
+    include_bytes!("../resources/versioned_constants_0_13_1.json");
 const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1_1: &[u8] =
-    include_bytes!("../resources/versioned_constants_13_1_1.json");
-const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_2: &[u8] = include_bytes!("../resources/versioned_constants_13_2.json");
+    include_bytes!("../resources/versioned_constants_0_13_1_1.json");
+const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_2: &[u8] =
+    include_bytes!("../resources/versioned_constants_0_13_2.json");
+const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_2_1: &[u8] =
+    include_bytes!("../resources/versioned_constants_0_13_2_1.json");
+const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_3: &[u8] =
+    include_bytes!("../resources/versioned_constants_0_13_3.json");
+const BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_4: &[u8] =
+    include_bytes!("../resources/versioned_constants_0_13_4.json");
 
 lazy_static::lazy_static! {
-    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_2: VersionedConstants =
-        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_2).unwrap();
-    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_1_1: VersionedConstants =
-        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1_1).unwrap();
-    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_1: VersionedConstants =
-        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1).unwrap();
     pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_0: VersionedConstants =
         serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_0).unwrap();
+    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_1: VersionedConstants =
+        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1).unwrap();
+    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_1_1: VersionedConstants =
+        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_1_1).unwrap();
+    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_2: VersionedConstants =
+        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_2).unwrap();
+    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_2_1: VersionedConstants =
+        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_2_1).unwrap();
+    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_3: VersionedConstants =
+        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_3).unwrap();
+    pub static ref BLOCKIFIER_VERSIONED_CONSTANTS_0_13_4: VersionedConstants =
+        serde_json::from_slice(BLOCKIFIER_VERSIONED_CONSTANTS_JSON_0_13_4).unwrap();
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -374,6 +389,8 @@ impl Default for ChainVersionedConstants {
             (StarknetVersion::V0_13_1, BLOCKIFIER_VERSIONED_CONSTANTS_0_13_1.deref().clone()),
             (StarknetVersion::V0_13_1_1, BLOCKIFIER_VERSIONED_CONSTANTS_0_13_1_1.deref().clone()),
             (StarknetVersion::V0_13_2, BLOCKIFIER_VERSIONED_CONSTANTS_0_13_2.deref().clone()),
+            (StarknetVersion::V0_13_3, BLOCKIFIER_VERSIONED_CONSTANTS_0_13_3.deref().clone()),
+            (StarknetVersion::V0_13_4, BLOCKIFIER_VERSIONED_CONSTANTS_0_13_4.deref().clone()),
         ]
         .into()
     }
