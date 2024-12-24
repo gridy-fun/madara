@@ -26,6 +26,7 @@ blockifier = { workspace = true, features = ["testing"] }
 mockall.workspace = true
 assert_matches.workspace = true
 lazy_static.workspace = true
+serde = { workspace = true, default-features = true }
 serde_json.workspace = true
 
 [features]
@@ -37,6 +38,7 @@ testing = ["blockifier/testing", "mc-db/testing", "mockall"]
 mc-analytics.workspace = true
 mc-block-import.workspace = true
 mc-db.workspace = true
+mc-devnet.workspace = true
 mc-exec.workspace = true
 mc-mempool.workspace = true
 mp-block.workspace = true
@@ -53,7 +55,8 @@ blockifier.workspace = true
 starknet-core.workspace = true
 starknet-types-core.workspace = true
 starknet_api.workspace = true
-
+starknet.workspace = true
+starknet-types-rpc = { workspace = true }
 # Other
 anyhow.workspace = true
 mockall = { workspace = true, optional = true }
@@ -76,3 +79,4 @@ tracing = { workspace = true }
 tracing-core = { workspace = true, default-features = false }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+rand.workspace = true

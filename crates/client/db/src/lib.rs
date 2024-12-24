@@ -31,6 +31,7 @@ pub mod contract_db;
 pub mod db_block_id;
 pub mod db_metrics;
 pub mod devnet_db;
+pub mod game_db;
 pub mod l1_db;
 pub mod mempool_db;
 pub mod storage_updates;
@@ -151,6 +152,8 @@ pub enum Column {
     Devnet,
 
     MempoolTransactions,
+    /// Game DB for Gridy
+    Game,
 }
 
 impl fmt::Debug for Column {
@@ -165,6 +168,7 @@ impl fmt::Display for Column {
     }
 }
 
+// TODO: why do I need to explicitly add Column memeber here, can't we fetch it dynamically from Column
 impl Column {
     pub const ALL: &'static [Self] = {
         use Column::*;
@@ -198,6 +202,7 @@ impl Column {
             PendingContractStorage,
             Devnet,
             MempoolTransactions,
+            Game,
         ]
     };
     pub const NUM_COLUMNS: usize = Self::ALL.len();
@@ -234,6 +239,7 @@ impl Column {
             PendingContractStorage => "pending_contract_storage",
             Devnet => "devnet",
             MempoolTransactions => "mempool_transactions",
+            Game => "game",
         }
     }
 }
