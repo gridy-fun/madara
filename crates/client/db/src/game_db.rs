@@ -118,6 +118,7 @@ pub struct AddressNode {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ListMetadata {
+    game_address : String,
     head: Option<String>,               // First address
     tail: Option<String>,               // Last address
     pub next_iter_addr: Option<String>, // Next address for iterator
@@ -125,11 +126,11 @@ pub struct ListMetadata {
     pub tiles_mined: u64,               // Number of tiles mined
 }
 
-const MINES_PER_TRANSACTION: i64 = 50;
+const MINES_PER_TRANSACTION: i64 = 500;
 const METADATA_KEY: &[u8] = b"list_metadata";
 
 impl MadaraBackend {
-    pub fn get_game_metadata(&self) -> Result<ListMetadata, rocksdb::Error> {
+    pub fn game_get_metadata(&self) -> Result<ListMetadata, rocksdb::Error> {
         let col = self.db.get_column(Column::Game);
         let meta = self
             .db
@@ -139,7 +140,7 @@ impl MadaraBackend {
         Ok(meta)
     }
 
-    pub fn update_game_metadata(&self, updates: impl FnOnce(&mut ListMetadata)) -> Result<(), rocksdb::Error> {
+    pub fn game_update_metadata(&self, updates: impl FnOnce(&mut ListMetadata)) -> Result<(), rocksdb::Error> {
         let col = self.db.get_column(Column::Game);
         let mut batch = WriteBatch::default();
 
@@ -163,7 +164,7 @@ impl MadaraBackend {
         Ok(())
     }
 
-    /// Add new game address to the linked list
+    /// Add new bot address to the linked list
     /// 1. Create new node with current address, with previous pointing to old tail
     /// 2. Add new node to the database
     /// 3. If it's first address, set head & tail to this address
@@ -171,9 +172,9 @@ impl MadaraBackend {
     /// 5. Update tail to the new address
     /// 6. Update metadata, including tail and length
     /// 7. Write batch to the database
-    pub fn add_game_address(&self, address: &str) -> Result<(), rocksdb::Error> {
+    pub fn game_add_bot_address(&self, address: &str) -> Result<(), rocksdb::Error> {
         let col = self.db.get_column(Column::Game);
-        let mut meta = self.get_game_metadata()?;
+        let mut meta = self.game_get_metadata()?;
 
         let new_node = AddressNode {
             address: address.to_string(),
@@ -215,9 +216,9 @@ impl MadaraBackend {
     /// 2. Modify previous pointer of next node to point to node before this one
     /// 3. Delete provided node. Reduce length by 1 in metadata
     /// 4. Write batch to the database
-    pub fn delete_game_address(&self, address: &str) -> Result<(), rocksdb::Error> {
+    pub fn game_delete_bot_address(&self, address: &str) -> Result<(), rocksdb::Error> {
         let col = self.db.get_column(Column::Game);
-        let mut meta = self.get_game_metadata()?;
+        let mut meta = self.game_get_metadata()?;
 
         // Get the node to delete
         if let Some(node_bytes) = self.db.get_cf(&col, address.as_bytes())? {
@@ -268,9 +269,9 @@ impl MadaraBackend {
         Ok(()) // Address not found
     }
 
-    pub fn get_all_game_addresses(&self) -> Result<Vec<String>, rocksdb::Error> {
+    pub fn game_get_all_bot_addresses(&self) -> Result<Vec<String>, rocksdb::Error> {
         let col = self.db.get_column(Column::Game);
-        let meta = self.get_game_metadata()?;
+        let meta = self.game_get_metadata()?;
         let mut addresses = Vec::new();
 
         let mut current = meta.head;
@@ -288,9 +289,9 @@ impl MadaraBackend {
         Ok(addresses)
     }
 
-    pub fn get_bots_list(&self) -> Result<Vec<String>, rocksdb::Error> {
+    pub fn game_get_bots_list(&self) -> Result<Vec<String>, rocksdb::Error> {
         let col = self.db.get_column(Column::Game);
-        let meta = self.get_game_metadata()?;
+        let meta = self.game_get_metadata()?;
 
         let next_start_address = meta.next_iter_addr;
 
@@ -325,7 +326,7 @@ impl MadaraBackend {
             }
         }
 
-        let mut meta = self.get_game_metadata()?;
+        let mut meta = self.game_get_metadata()?;
         // Update metadata with next start address
         meta.next_iter_addr = current_address;
         self.db.put_cf(&col, METADATA_KEY, serde_json::to_vec(&meta).unwrap())?;

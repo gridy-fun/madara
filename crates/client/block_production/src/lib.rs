@@ -17,9 +17,10 @@
 
 use crate::close_block::close_block;
 use crate::metrics::BlockProductionMetrics;
-use blockifier::blockifier::transaction_executor::{TransactionExecutor, BLOCK_STATE_ACCESS_ERR};
+use blockifier::blockifier::transaction_executor::{TransactionExecutor, TransactionExecutorError, BLOCK_STATE_ACCESS_ERR};
 use blockifier::bouncer::BouncerWeights;
 use blockifier::transaction::errors::TransactionExecutionError;
+use blockifier::transaction::objects::TransactionExecutionInfo;
 use finalize_execution_state::StateDiffToStateMapError;
 use mc_block_import::{BlockImportError, BlockImporter};
 use mc_db::db_block_id::DbBlockId;
@@ -71,15 +72,17 @@ const SPAWNED_BOT_EVENT_SELECTOR: &str = "0x2cd0383e81a65036ae8acc94ac89e891d138
 const BOMB_FOUND_EVENT_SELECTOR: &str = "0x111861367b42e77c11a98efb6d09a14c2dc470eee1a4d2c3c1e8c54015da2e5";
 const DIAMOND_FOUND_EVENT_SELECTOR: &str = "0x14528085c8fd64b9210572c5b6015468f8352c17c9c22f5b7aa62a55a56d8d7";
 const TILE_MINED_SELECTOR: &str = "0xd5efc9cfb6a4f6bb9eae0ce39d32480473877bb3f7a4eaa3944c881a2c8d25";
-const TILE_ALREADY_MINED_SELECTOR: &str = "0x01b74d97806c93468070e49a1626aba00f8e89dfb07246492af4566f898de982";
-const SUSPEND_BOT_SELECTOR: &str = "0x01dcca826eea45d96bfbf26e9aabf510e94c6de62d0ce5e5b6e60c51c7640af8";
-const REVIVE_BOT_SELECTOR: &str = "0x01d6a6a42fd13b206a721dbca3ae720621707ef3016850e2c5536244e5a7858a";
-const EXECUTOR_ADDRESS: &str = "0x055be462e718c4166d656d11f89e341115b8bc82389c3762a10eade04fcb225d";
-const EXECUTOR_PRIVATE_KEY: &str = "0x077e56c6dc32d40a67f6f7e6625c8dc5e570abe49c0a24e9202e4ae906abcc07";
-const GAME_CONTRACT_ADDRESS: &str = "0x1d403911bd0f8c4a83e6504f7a84a4fbb1a255ce9b36b67edfb53a110fca5f4";
+const TILE_ALREADY_MINED_SELECTOR: &str = "0x1b74d97806c93468070e49a1626aba00f8e89dfb07246492af4566f898de982";
+const SUSPEND_BOT_SELECTOR: &str = "0x1dcca826eea45d96bfbf26e9aabf510e94c6de62d0ce5e5b6e60c51c7640af8";
+const REVIVE_BOT_SELECTOR: &str = "0x1d6a6a42fd13b206a721dbca3ae720621707ef3016850e2c5536244e5a7858a";
+
+const SEQUENCER_ADDRESS: &str = "0x008a1719e7ca19f3d91e8ef50a48fc456575f645497a1d55f30e3781f786afe4";
+const SEQUENCER_PRIVATE_KEY: &str = "0x0514977443078cf1e0c36bc88b89ada9a46061a5cf728f40274caea21d76f174";
+
+const GAME_CONTRACT_ADDRESS: &str = "0x647ce284953bd650be96bf641bfe9bf55a3fed73f63ab7a2ff3c7c49719e7d";
 // Game Config
-const GAME_WIDTH: u64 = 100;
-const GAME_HEIGHT: u64 = 100;
+const GAME_WIDTH: u64 = 10000;
+const GAME_HEIGHT: u64 = 1000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -250,7 +253,10 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             // println!(">>> TXNS TO PROCESS BLOCKFIER LENGTH :  {:?} ", txs_to_process_blockifier.len());
             // println!(">>> TXNS TO PROCESS BLOCKFIER :  {:?} ", txs_to_process_blockifier);
 
-            // println!(">>> Txn Receipt {:?}", all_results);
+            let result: &Vec<Result<TransactionExecutionInfo, TransactionExecutorError>> = &all_results.as_ref();
+            let x = result.iter().map(|x| x.as_ref().unwrap()).collect::<Vec<&TransactionExecutionInfo>>()[0];
+            let n_steps = x.transaction_receipt.resources.vm_resources.n_steps;
+            println!(">>> N_STEPS  {:?}", n_steps);
 
             let _ress = self.listen_for_bot_events(&all_results).expect("Couldn't ingest Bot events");
 
@@ -426,7 +432,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                                     points
                                 );
                                 self.backend
-                                    .update_game_metadata(|meta| {
+                                    .game_update_metadata(|meta| {
                                         meta.tiles_mined += 1;
                                     })
                                     .expect("could not update the tiles mined number");
@@ -437,7 +443,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                                 let bot_location = event.data.0[1].to_string();
                                 println!(
                                     ">>> Event : TileAlreadyMined {:?} at {:?}",
-                                    Felt::from_str(bot_address.as_str()),
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                                     bot_location
                                 );
                             }
@@ -448,22 +454,22 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                                 let bot_location = event.data.0[2].to_string();
                                 println!(
                                     ">>> Event : SpawnedBot {:?} at {:?} by {:?}",
-                                    Felt::from_str(bot_address.as_str()),
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                                     bot_location,
-                                    player
+                                    Felt::from_str(player.as_str()).expect("Could not get address")
                                 );
                                 spawned_bots.push(bot_address);
                             }
                             // SuspendBot
                             else if key == EventKey(suspend_bot_felt) {
                                 let bot_address = event.data.0[0].to_string();
-                                println!(">>> Event : SuspendBot {:?}", Felt::from_str(bot_address.as_str()));
+                                println!(">>> Event : SuspendBot {:?}", Felt::from_str(bot_address.as_str()).expect("Could not get address"));
                                 // TODO: add kill bot here if needed.
                             }
                             // ReviveBot
                             else if key == EventKey(revive_bot_felt) {
                                 let bot_address = event.data.0[0].to_string();
-                                println!(">>> Event : ReviveBot {:?}", Felt::from_str(bot_address.as_str()));
+                                println!(">>> Event : ReviveBot {:?}", Felt::from_str(bot_address.as_str()).expect("Could not get address"));
                                 // TODO: add spawned bot here if needed.
                             }
                         }
@@ -475,12 +481,12 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // Kill all the bots !
         // TODO: these are multiple DB operations, can it be clubbed to a single operation
         for killed_bot in killed_bots {
-            let _ = self.backend.delete_game_address(&killed_bot.as_str()).expect("Could not remove the bot");
+            let _ = self.backend.game_delete_bot_address(&killed_bot.as_str()).expect("Could not remove the bot");
         }
 
         // Add new bots !
         for spawned_bot in spawned_bots {
-            let _ = self.backend.add_game_address(&spawned_bot.as_str()).expect("Could not add the bot");
+            let _ = self.backend.game_add_bot_address(&spawned_bot.as_str()).expect("Could not add the bot");
         }
 
         Ok(())
@@ -597,8 +603,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // =========================================================================================
         // Execute BOT transactions :
 
-        let game_metadata = self.backend.get_game_metadata().expect("Unable to fetch last start index");
-        let bot_addresses = self.backend.get_bots_list().expect("Could not get bots' list");
+        let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
+        let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
         if game_metadata.tiles_mined < GAME_HEIGHT * GAME_WIDTH && bot_addresses.len() > 0 {
             println!(">>> Triggering bot transactions");
             println!(
@@ -608,12 +614,12 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             );
             let addresses_clone = bot_addresses.clone();
 
-            let c = bot_addresses
-                .iter()
-                .map(|x| Felt::from_str(x).expect("could not convert string to felt"))
-                .collect::<Vec<_>>();
+            // let c = bot_addresses
+            //     .iter()
+            //     .map(|x| Felt::from_str(x).expect("could not convert string to felt"))
+            //     .collect::<Vec<_>>();
 
-            println!(">>> DB bots list : {:?}", c);
+            // println!(">>> DB bots list : {:?}", c);
             // Do nothing if 0 bots to execute
             if bot_addresses.is_empty() {
                 return Ok(false);
@@ -738,8 +744,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     }
 
     fn generate_txns(&self, contract_addresses: Vec<String>) -> BroadcastedTxn<Felt> {
-        let sequencer_priv_key = Felt::from_hex(EXECUTOR_PRIVATE_KEY).expect("Unable to extract priv key from hex");
-        let sequencer_address = Felt::from_hex(EXECUTOR_ADDRESS).expect("Unable to extract public key from hex");
+        let sequencer_address = Felt::from_hex(SEQUENCER_ADDRESS).expect("Unable to extract public key from hex");
+        let sequencer_priv_key = Felt::from_hex(SEQUENCER_PRIVATE_KEY).expect("Unable to extract priv key from hex");
         let game_address = Felt::from_hex(GAME_CONTRACT_ADDRESS).expect("Unable to extract public key from hex");
 
         let signing_key = SigningKey::from_secret_scalar(sequencer_priv_key);
@@ -749,7 +755,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             .backend
             .get_contract_nonce_at(&DbBlockId::Pending, &sequencer_address)
             .expect("Unable to fetch nonce from the block.")
-            .expect("Nonce is none");
+            // if nonce is not found, use 0
+            .unwrap_or(Felt::from(0));
 
         println!(">>> TXN NONCE {:?}", nonce);
 
