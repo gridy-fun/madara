@@ -17,7 +17,9 @@
 
 use crate::close_block::close_block;
 use crate::metrics::BlockProductionMetrics;
-use blockifier::blockifier::transaction_executor::{TransactionExecutor, TransactionExecutorError, BLOCK_STATE_ACCESS_ERR};
+use blockifier::blockifier::transaction_executor::{
+    TransactionExecutor, TransactionExecutorError, BLOCK_STATE_ACCESS_ERR,
+};
 use blockifier::bouncer::BouncerWeights;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::TransactionExecutionInfo;
@@ -76,12 +78,12 @@ const TILE_ALREADY_MINED_SELECTOR: &str = "0x1b74d97806c93468070e49a1626aba00f8e
 const SUSPEND_BOT_SELECTOR: &str = "0x1dcca826eea45d96bfbf26e9aabf510e94c6de62d0ce5e5b6e60c51c7640af8";
 const REVIVE_BOT_SELECTOR: &str = "0x1d6a6a42fd13b206a721dbca3ae720621707ef3016850e2c5536244e5a7858a";
 
-const SEQUENCER_ADDRESS: &str = "0x008a1719e7ca19f3d91e8ef50a48fc456575f645497a1d55f30e3781f786afe4";
-const SEQUENCER_PRIVATE_KEY: &str = "0x0514977443078cf1e0c36bc88b89ada9a46061a5cf728f40274caea21d76f174";
+const SEQUENCER_ADDRESS: &str = "0x618e3a340ccc92b620e9ce24deb10bb984f1b4eff62674d777f2a95c12ae309";
+const SEQUENCER_PRIVATE_KEY: &str = "0x6d66835cdd46c3671e2f2830395c1f342ca7fff217a15d10f8fdcdf8b28e454";
 
-const GAME_CONTRACT_ADDRESS: &str = "0x647ce284953bd650be96bf641bfe9bf55a3fed73f63ab7a2ff3c7c49719e7d";
+const GAME_CONTRACT_ADDRESS: &str = "0x32063c0a85fbdbb0d9f1744c7b0756fdce885b43fdb397e80ece66464477486";
 // Game Config
-const GAME_WIDTH: u64 = 10000;
+const GAME_WIDTH: u64 = 1000;
 const GAME_HEIGHT: u64 = 1000;
 
 #[derive(Debug, thiserror::Error)]
@@ -463,13 +465,19 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                             // SuspendBot
                             else if key == EventKey(suspend_bot_felt) {
                                 let bot_address = event.data.0[0].to_string();
-                                println!(">>> Event : SuspendBot {:?}", Felt::from_str(bot_address.as_str()).expect("Could not get address"));
+                                println!(
+                                    ">>> Event : SuspendBot {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address")
+                                );
                                 // TODO: add kill bot here if needed.
                             }
                             // ReviveBot
                             else if key == EventKey(revive_bot_felt) {
                                 let bot_address = event.data.0[0].to_string();
-                                println!(">>> Event : ReviveBot {:?}", Felt::from_str(bot_address.as_str()).expect("Could not get address"));
+                                println!(
+                                    ">>> Event : ReviveBot {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address")
+                                );
                                 // TODO: add spawned bot here if needed.
                             }
                         }
@@ -628,7 +636,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             // TODO: what is bot is disabled ?
 
             let txn = self.generate_txns(addresses_clone);
-            self.mempool.accept_invoke_tx_broadcast_txn(txn).expect("Unable to accept invoke tx");
+            self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
             println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
 
             // =========================================================================================
@@ -743,7 +751,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         Ok(())
     }
 
-    fn generate_txns(&self, contract_addresses: Vec<String>) -> BroadcastedTxn<Felt> {
+    fn generate_txns(&self, contract_addresses: Vec<String>) -> BroadcastedInvokeTxn<Felt> {
         let sequencer_address = Felt::from_hex(SEQUENCER_ADDRESS).expect("Unable to extract public key from hex");
         let sequencer_priv_key = Felt::from_hex(SEQUENCER_PRIVATE_KEY).expect("Unable to extract priv key from hex");
         let game_address = Felt::from_hex(GAME_CONTRACT_ADDRESS).expect("Unable to extract public key from hex");
@@ -774,11 +782,17 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let txn = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
             sender_address: sequencer_address,
             calldata: Multicall::with_vec(call_vec).flatten().collect(),
-            max_fee: Felt::from_hex("2386f26fc10000").unwrap(),
+            max_fee: Felt::from_str("100000000").unwrap(),
             signature: vec![], // will be added when signing
             nonce,
         }));
-        self.sign_tx(txn, signing_key.clone()).expect("Not able to sign the transaction.")
+
+        let signed_transaction = self.sign_tx(txn, signing_key.clone()).expect("Not able to sign the transaction.");
+
+        match signed_transaction {
+            BroadcastedTxn::Invoke(tx) => tx,
+            _ => panic!("Invalid Txn"),
+        }
     }
 
     fn sign_tx(&self, mut tx: BroadcastedTxn<Felt>, signing_key: SigningKey) -> anyhow::Result<BroadcastedTxn<Felt>> {

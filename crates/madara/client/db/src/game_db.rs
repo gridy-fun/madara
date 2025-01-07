@@ -1,109 +1,3 @@
-// use std::str::FromStr as _;
-
-// use crate::DatabaseExt;
-// use crate::{Column, MadaraBackend, MadaraStorageError};
-// use rocksdb::{WriteBatch, WriteOptions};
-// use serde::{Deserialize, Serialize};
-// use starknet_types_core::felt::Felt;
-
-// // TODO: add a single key value pair, that stores the start_index
-
-// const COUNTER_KEY: &[u8] = b"bot_address_counter";
-// const NEXT_START_INDEX_KEY: &'static [u8] = b"last_start_index";
-
-// type Result<T, E = MadaraStorageError> = std::result::Result<T, E>;
-
-// impl MadaraBackend {
-//     /// Add address to the end of sequence
-//     /// Time Complexity: O(log N)
-//     #[tracing::instrument(skip(self), fields(module = "GameDB"))]
-//     pub fn add_game_address(&self, address: &str) -> Result<(), rocksdb::Error> {
-//         let col = self.db.get_column(Column::Game);
-
-//         // Get the counter
-//         let current_seq = self
-//             .db
-//             .get_cf(&col, COUNTER_KEY)?
-//             .and_then(|bytes| String::from_utf8(bytes).ok())
-//             .and_then(|s| s.parse::<u64>().ok())
-//             .unwrap_or(0);
-
-//         // Create key with padded sequence
-//         let key = format!("{:020}", current_seq);
-
-//         // Batch write (Address and Current Sequence)
-//         let mut batch = WriteBatch::default();
-
-//         // increment the counter
-//         batch.put_cf(&col, COUNTER_KEY, (current_seq + 1).to_string().as_bytes());
-//         // add the address
-//         batch.put_cf(&col, key.as_bytes(), address.as_bytes());
-
-//         self.db.write(batch)
-//     }
-
-//     /// Delete specific address
-//     /// Time Complexity: O(N)
-//     pub fn delete_game_address(&self, target_address: &str) -> Result<(), rocksdb::Error> {
-//         let col = self.db.get_column(Column::Game);
-
-//         let target_bytes = target_address.as_bytes();
-
-//         // Iterate to find matching address
-//         let iter = self.db.iterator_cf(&col, rocksdb::IteratorMode::Start);
-//         for result in iter {
-//             let (key, value) = result?;
-//             if key != COUNTER_KEY.into() && value == target_bytes.into() {
-//                 return self.db.delete_cf(&col, key);
-//             }
-//         }
-//         // TODO: this counter logic is flawed
-//         // TODO: need to manage a manual indexing
-
-//         // TODO: We also need to update the start_index accordingly
-
-//         Ok(()) // Address not found
-//     }
-
-//     /// Get all addresses in order of addition
-//     /// Time Complexity: O(N)
-//     pub fn get_all_game_addresses(&self) -> Result<Vec<Felt>, rocksdb::Error> {
-//         let col = self.db.get_column(Column::Game);
-//         let mut addresses = Vec::new();
-
-//         let iter = self.db.iterator_cf(&col, rocksdb::IteratorMode::Start);
-//         for result in iter {
-//             let (key, value) = result?;
-//             println!(" >>> Values >>> {:?} : {:?}", String::from_utf8_lossy(&key), String::from_utf8_lossy(&value));
-//             if key != COUNTER_KEY.into() && key != NEXT_START_INDEX_KEY.into() {
-//                 if let Ok(address) = String::from_utf8(value.to_vec()) {
-//                     addresses.push(Felt::from_str(&address).expect("Could not convert address to Felt"));
-//                 }
-//             }
-//         }
-
-//         Ok(addresses)
-//     }
-
-//     // Add new methods for next_start_index
-//     pub fn update_game_next_start_index(&self, index: i64) -> Result<(), rocksdb::Error> {
-//         let col = self.db.get_column(Column::Game);
-//         self.db.put_cf(&col, NEXT_START_INDEX_KEY, index.to_string().as_bytes())
-//     }
-
-//     pub fn get_game_next_start_index(&self) -> Result<Option<i64>, rocksdb::Error> {
-//         let col = self.db.get_column(Column::Game);
-
-//         let next_start_index = self
-//             .db
-//             .get_cf(&col, NEXT_START_INDEX_KEY)?
-//             .and_then(|bytes| String::from_utf8(bytes).ok())
-//             .and_then(|s| s.parse::<i64>().ok());
-
-//         Ok(next_start_index)
-//     }
-// }
-
 use crate::DatabaseExt;
 use crate::{Column, MadaraBackend};
 use rocksdb::WriteBatch;
@@ -118,7 +12,7 @@ pub struct AddressNode {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ListMetadata {
-    game_address : String,
+    game_address: String,
     head: Option<String>,               // First address
     tail: Option<String>,               // Last address
     pub next_iter_addr: Option<String>, // Next address for iterator
@@ -126,7 +20,7 @@ pub struct ListMetadata {
     pub tiles_mined: u64,               // Number of tiles mined
 }
 
-const MINES_PER_TRANSACTION: i64 = 500;
+const MINES_PER_TRANSACTION: i64 = 5;
 const METADATA_KEY: &[u8] = b"list_metadata";
 
 impl MadaraBackend {
