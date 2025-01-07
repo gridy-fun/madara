@@ -78,13 +78,13 @@ const TILE_ALREADY_MINED_SELECTOR: &str = "0x1b74d97806c93468070e49a1626aba00f8e
 const SUSPEND_BOT_SELECTOR: &str = "0x1dcca826eea45d96bfbf26e9aabf510e94c6de62d0ce5e5b6e60c51c7640af8";
 const REVIVE_BOT_SELECTOR: &str = "0x1d6a6a42fd13b206a721dbca3ae720621707ef3016850e2c5536244e5a7858a";
 
-const SEQUENCER_ADDRESS: &str = "0x618e3a340ccc92b620e9ce24deb10bb984f1b4eff62674d777f2a95c12ae309";
-const SEQUENCER_PRIVATE_KEY: &str = "0x6d66835cdd46c3671e2f2830395c1f342ca7fff217a15d10f8fdcdf8b28e454";
+const SEQUENCER_ADDRESS: &str = "0x115168e0a250468a4e451fc90f9f64c321488b86ef22a0ba40369bf0630548";
+const SEQUENCER_PRIVATE_KEY: &str = "0x55a5facd0772ba2a534367edcdaeb27f3390d94280c462b7cf604a7eaba8b73";
 
-const GAME_CONTRACT_ADDRESS: &str = "0x32063c0a85fbdbb0d9f1744c7b0756fdce885b43fdb397e80ece66464477486";
+const GAME_CONTRACT_ADDRESS: &str = "0x7b5b5c15d4f3c454702961631bc10943f59809d0a9558e14e68855b17eeae38";
 // Game Config
-const GAME_WIDTH: u64 = 1000;
-const GAME_HEIGHT: u64 = 1000;
+const GAME_WIDTH: u64 = 100;
+const GAME_HEIGHT: u64 = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -246,19 +246,17 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             stats.n_batches += 1;
 
             // Execute the transactions.
-            let start = Instant::now();
             let all_results = self.executor.execute_txs(&txs_to_process_blockifier);
-            let end = start.elapsed();
 
-            println!(">>> Execution returned with : {:?} within {:?} ", all_results.len(), end);
+            // println!(">>> Execution returned with : {:?} within {:?} ", all_results.len(), end);
 
             // println!(">>> TXNS TO PROCESS BLOCKFIER LENGTH :  {:?} ", txs_to_process_blockifier.len());
             // println!(">>> TXNS TO PROCESS BLOCKFIER :  {:?} ", txs_to_process_blockifier);
 
-            let result: &Vec<Result<TransactionExecutionInfo, TransactionExecutorError>> = &all_results.as_ref();
-            let x = result.iter().map(|x| x.as_ref().unwrap()).collect::<Vec<&TransactionExecutionInfo>>()[0];
-            let n_steps = x.transaction_receipt.resources.vm_resources.n_steps;
-            println!(">>> N_STEPS  {:?}", n_steps);
+            // let result: &Vec<Result<TransactionExecutionInfo, TransactionExecutorError>> = &all_results.as_ref();
+            // let x = result.iter().map(|x| x.as_ref().unwrap()).collect::<Vec<&TransactionExecutionInfo>>()[0];
+            // let n_steps = x.transaction_receipt.resources.vm_resources.n_steps;
+            // println!(">>> N_STEPS  {:?}", n_steps);
 
             let _ress = self.listen_for_bot_events(&all_results).expect("Couldn't ingest Bot events");
 
@@ -758,7 +756,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
 
         let signing_key = SigningKey::from_secret_scalar(sequencer_priv_key);
 
-        // TODO: Either fetch nonce from code or from db, don't use the current incode storage method
         let nonce = self
             .backend
             .get_contract_nonce_at(&DbBlockId::Pending, &sequencer_address)
@@ -778,7 +775,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             })
         }
 
-        // TODO: This is using devnet dependencies, might not be ideal
         let txn = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
             sender_address: sequencer_address,
             calldata: Multicall::with_vec(call_vec).flatten().collect(),

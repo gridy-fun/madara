@@ -20,7 +20,7 @@ pub struct ListMetadata {
     pub tiles_mined: u64,               // Number of tiles mined
 }
 
-const MINES_PER_TRANSACTION: i64 = 5;
+const MINES_PER_TRANSACTION: i64 = 500;
 const METADATA_KEY: &[u8] = b"list_metadata";
 
 impl MadaraBackend {
