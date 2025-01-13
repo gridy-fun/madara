@@ -637,36 +637,36 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // =========================================================================================
         // Execute BOT transactions :
 
-        let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
-        let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
-        if game_metadata.tiles_mined < GAME_HEIGHT * GAME_WIDTH && bot_addresses.len() > 0 {
-            println!(">>> Triggering bot transactions");
-            println!(
-                ">>> Current Tiles mined : {:?} vs total to be mined : {:?}",
-                game_metadata.tiles_mined,
-                GAME_HEIGHT * GAME_WIDTH
-            );
-            let addresses_clone = bot_addresses.clone();
+        // let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
+        // let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
+        // if game_metadata.tiles_mined < GAME_HEIGHT * GAME_WIDTH && bot_addresses.len() > 0 {
+        //     println!(">>> Triggering bot transactions");
+        //     println!(
+        //         ">>> Current Tiles mined : {:?} vs total to be mined : {:?}",
+        //         game_metadata.tiles_mined,
+        //         GAME_HEIGHT * GAME_WIDTH
+        //     );
+        //     let addresses_clone = bot_addresses.clone();
 
-            // let c = bot_addresses
-            //     .iter()
-            //     .map(|x| Felt::from_str(x).expect("could not convert string to felt"))
-            //     .collect::<Vec<_>>();
+        //     // let c = bot_addresses
+        //     //     .iter()
+        //     //     .map(|x| Felt::from_str(x).expect("could not convert string to felt"))
+        //     //     .collect::<Vec<_>>();
 
-            // println!(">>> DB bots list : {:?}", c);
-            // Do nothing if 0 bots to execute
-            if bot_addresses.is_empty() {
-                return Ok(false);
-            }
-            // TODO: check if game is active or not
-            // TODO: what is bot is disabled ?
+        //     // println!(">>> DB bots list : {:?}", c);
+        //     // Do nothing if 0 bots to execute
+        //     if bot_addresses.is_empty() {
+        //         return Ok(false);
+        //     }
+        //     // TODO: check if game is active or not
+        //     // TODO: what is bot is disabled ?
 
-            let txn = self.generate_txns(addresses_clone);
-            self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
-            println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
+        //     let txn = self.generate_txns(addresses_clone);
+        //     self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
+        //     println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
 
-            // =========================================================================================
-        }
+        //     // =========================================================================================
+        // }
         Ok(false)
     }
 
