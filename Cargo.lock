@@ -5505,6 +5505,7 @@ dependencies = [
  "assert_matches",
  "bitvec",
  "blockifier",
+ "dotenv",
  "lazy_static",
  "mc-analytics",
  "mc-block-import",

@@ -9,7 +9,7 @@ RUN apt-get -y update && \
 # Set the working directory
 WORKDIR /usr/src/madara/
 # Copy the source code into the container
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock .db-versions.yml ./
 COPY crates crates
 COPY cairo-artifacts cairo-artifacts
 

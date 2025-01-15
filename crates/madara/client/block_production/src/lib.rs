@@ -56,6 +56,8 @@ mod close_block;
 mod finalize_execution_state;
 pub mod metrics;
 mod re_add_finalized_to_blockifier;
+use dotenv::dotenv;
+use std::env;
 
 #[derive(Default, Clone)]
 struct ContinueBlockStats {
@@ -77,14 +79,6 @@ const TILE_MINED_SELECTOR: &str = "0xd5efc9cfb6a4f6bb9eae0ce39d32480473877bb3f7a
 const TILE_ALREADY_MINED_SELECTOR: &str = "0x1b74d97806c93468070e49a1626aba00f8e89dfb07246492af4566f898de982";
 const SUSPEND_BOT_SELECTOR: &str = "0x1dcca826eea45d96bfbf26e9aabf510e94c6de62d0ce5e5b6e60c51c7640af8";
 const REVIVE_BOT_SELECTOR: &str = "0x1d6a6a42fd13b206a721dbca3ae720621707ef3016850e2c5536244e5a7858a";
-
-const SEQUENCER_ADDRESS: &str = "0x1bf17dc0a448c77dd4b3e44ab9383fec376f606adcbe7d493b192bbe56dd954";
-const SEQUENCER_PRIVATE_KEY: &str = "0x6a4019e9fadb46a58c5074b0a48d6c7b5a6bcd5387f63a9422764be9c6762d4";
-
-const GAME_CONTRACT_ADDRESS: &str = "0x704073fac0a0a4bb1e970a19b83ac2bc1f47b627e961c1606483b294afe2062";
-// Game Config
-const GAME_WIDTH: u64 = 1000;
-const GAME_HEIGHT: u64 = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -585,6 +579,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     /// Each "tick" of the block time updates the pending block but only with the appropriate fraction of the total bouncer capacity.
     #[tracing::instrument(skip(self), fields(module = "BlockProductionTask"))]
     pub async fn on_pending_time_tick(&mut self) -> Result<bool, Error> {
+        dotenv().ok();
         let start = Instant::now();
         let current_pending_tick = self.current_pending_tick;
         if current_pending_tick == 0 {
@@ -637,15 +632,18 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // =========================================================================================
         // Execute BOT transactions :
 
+        let game_width = env::var("MADARA_GAME_WIDTH").expect("MADARA_GAME_WIDTH not set").parse::<u64>().unwrap();
+        let game_height = env::var("MADARA_GAME_HEIGHT").expect("MADARA_GAME_HEIGHT not set").parse::<u64>().unwrap();
+
+        println!(">>> Game width : {:?} and height : {:?}", game_width, game_height);
+
+        let area = game_width * game_height;
+
         let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
         let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
-        if game_metadata.tiles_mined < GAME_HEIGHT * GAME_WIDTH && bot_addresses.len() > 0 {
+        if game_metadata.tiles_mined < area && bot_addresses.len() > 0 {
             println!(">>> Triggering bot transactions");
-            println!(
-                ">>> Current Tiles mined : {:?} vs total to be mined : {:?}",
-                game_metadata.tiles_mined,
-                GAME_HEIGHT * GAME_WIDTH
-            );
+            println!(">>> Current Tiles mined : {:?} vs total to be mined : {:?}", game_metadata.tiles_mined, area);
             let addresses_clone = bot_addresses.clone();
 
             // let c = bot_addresses
@@ -758,9 +756,17 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     }
 
     fn generate_txns(&self, contract_addresses: Vec<String>) -> BroadcastedInvokeTxn<Felt> {
-        let sequencer_address = Felt::from_hex(SEQUENCER_ADDRESS).expect("Unable to extract public key from hex");
-        let sequencer_priv_key = Felt::from_hex(SEQUENCER_PRIVATE_KEY).expect("Unable to extract priv key from hex");
-        let game_address = Felt::from_hex(GAME_CONTRACT_ADDRESS).expect("Unable to extract public key from hex");
+        let x = env::var("MADARA_GAME_SEQUENCER_ADDRESS").unwrap();
+        let y = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEY").unwrap();
+        let z = env::var("MADARA_GAME_CONTRACT_ADDRESS").unwrap();
+
+        println!(">>> SEQUENCER ADDRESS {:?}", x);
+        println!(">>> SEQUENCER PRIVATE KEY {:?}", y);
+        println!(">>> GAME ADDRESS {:?}", z);
+
+        let sequencer_address = Felt::from_hex(&x.as_str()).expect("Unable to extract public key from hex");
+        let sequencer_priv_key = Felt::from_hex(&y.as_str()).expect("Unable to extract priv key from hex");
+        let game_address = Felt::from_hex(&z.as_str()).expect("Unable to extract public key from hex");
 
         let signing_key = SigningKey::from_secret_scalar(sequencer_priv_key);
 
