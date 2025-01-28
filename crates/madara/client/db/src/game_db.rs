@@ -2,6 +2,7 @@ use crate::DatabaseExt;
 use crate::{Column, MadaraBackend};
 use rocksdb::WriteBatch;
 use serde::{Deserialize, Serialize};
+use std::env;
 
 #[derive(Serialize, Deserialize)]
 pub struct AddressNode {
@@ -20,7 +21,6 @@ pub struct ListMetadata {
     pub tiles_mined: u64,               // Number of tiles mined
 }
 
-const MINES_PER_TRANSACTION: i64 = 500;
 const METADATA_KEY: &[u8] = b"list_metadata";
 
 impl MadaraBackend {
@@ -184,6 +184,9 @@ impl MadaraBackend {
     }
 
     pub fn game_get_bots_list(&self) -> Result<Vec<String>, rocksdb::Error> {
+        let mines_per_transaction =
+            env::var("MADARA_GAME_TPS").expect("MADARA_GAME_TPS not set").parse::<i64>().unwrap();
+
         let col = self.db.get_column(Column::Game);
         let meta = self.game_get_metadata()?;
 
@@ -193,7 +196,7 @@ impl MadaraBackend {
         if meta.length == 0 {
             return Ok(vec![]);
         }
-        let mut return_bots = Vec::with_capacity(MINES_PER_TRANSACTION as usize);
+        let mut return_bots = Vec::with_capacity(mines_per_transaction as usize);
 
         // Start from the given address or head if None
         let mut current_address = match next_start_address {
@@ -201,8 +204,8 @@ impl MadaraBackend {
             None => meta.head.clone(),
         };
 
-        // Keep adding bots until we reach MINES_PER_TRANSACTION
-        while return_bots.len() < MINES_PER_TRANSACTION as usize {
+        // Keep adding bots until we reach mines_per_transaction
+        while return_bots.len() < mines_per_transaction as usize {
             if let Some(addr) = &current_address {
                 // Add current address
                 return_bots.push(addr.clone());
