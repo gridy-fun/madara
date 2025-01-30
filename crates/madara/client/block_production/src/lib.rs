@@ -23,6 +23,7 @@ use blockifier::blockifier::transaction_executor::{
 use blockifier::bouncer::BouncerWeights;
 use blockifier::transaction::errors::TransactionExecutionError;
 use blockifier::transaction::objects::TransactionExecutionInfo;
+use dotenv::dotenv;
 use finalize_execution_state::StateDiffToStateMapError;
 use mc_block_import::{BlockImportError, BlockImporter};
 use mc_db::db_block_id::DbBlockId;
@@ -37,7 +38,7 @@ use mp_class::ConvertedClass;
 use mp_convert::ToFelt;
 use mp_receipt::from_blockifier_execution_info;
 use mp_state_update::{ContractStorageDiffItem, DeclaredClassItem, NonceUpdate, StateDiff, StorageEntry};
-use mp_transactions::TransactionWithHash;
+use mp_transactions::{BroadcastedTransactionExt as _, TransactionWithHash};
 use mp_utils::service::ServiceContext;
 use opentelemetry::KeyValue;
 use rand::{thread_rng, Rng};
@@ -755,7 +756,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             // TODO: what is bot is disabled ?
 
             let txn = self.generate_txns(addresses_clone);
-            self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
+            self.mempool.tx_accept_invoke(txn).expect("Unable to accept invoke tx");
             println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
 
             // =========================================================================================
