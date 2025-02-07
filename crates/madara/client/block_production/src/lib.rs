@@ -659,8 +659,12 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             // TODO: check if game is active or not
             // TODO: what is bot is disabled ?
 
-            let txn = self.generate_txns(addresses_clone);
-            self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
+            let txns = self.generate_txns(addresses_clone);
+            println!(">>> Number of txns generated : {:?}", txns.len());
+            txns.iter().for_each(|txn| {
+                self.mempool.accept_invoke_tx(txn.clone()).expect("Unable to accept invoke tx");
+            });
+            // self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
             println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
 
             // =========================================================================================
@@ -755,7 +759,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         Ok(())
     }
 
-    fn generate_txns(&self, contract_addresses: Vec<String>) -> BroadcastedInvokeTxn<Felt> {
+    fn generate_txns(&self, contract_addresses: Vec<String>) -> Vec<BroadcastedInvokeTxn<Felt>> {
         let x = env::var("MADARA_GAME_SEQUENCER_ADDRESS").unwrap();
         let y = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEY").unwrap();
         let z = env::var("MADARA_GAME_CONTRACT_ADDRESS").unwrap();
@@ -789,20 +793,42 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             })
         }
 
-        let txn = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
-            sender_address: sequencer_address,
-            calldata: Multicall::with_vec(call_vec).flatten().collect(),
-            max_fee: Felt::from_str("100000000").unwrap(),
-            signature: vec![], // will be added when signing
-            nonce,
-        }));
+        let txns = self.create_txns(sequencer_address, nonce, call_vec, signing_key);
+        txns
+    }
 
-        let signed_transaction = self.sign_tx(txn, signing_key.clone()).expect("Not able to sign the transaction.");
+    fn create_txns(
+        &self,
+        sequencer_address: Felt,
+        starting_nonce: Felt,
+        call_vec: Vec<Call>,
+        signing_key: SigningKey,
+    ) -> Vec<BroadcastedInvokeTxn<Felt>> {
+        let mut internal_nonce = starting_nonce.clone().to_bigint();
 
-        match signed_transaction {
-            BroadcastedTxn::Invoke(tx) => tx,
-            _ => panic!("Invalid Txn"),
+        let mut txns: Vec<BroadcastedInvokeTxn<Felt>> = Vec::new();
+
+        for txn in call_vec {
+            // TODO: this is making multicall of 1 txns, remove mulitcall completely
+            let txn_internal = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
+                sender_address: sequencer_address,
+                calldata: Multicall::with_vec(vec![txn]).flatten().collect(),
+                max_fee: Felt::from_str("100000000").unwrap(),
+                signature: vec![],
+                nonce: Felt::from(internal_nonce.clone()),
+            }));
+
+            let signed_transaction =
+                self.sign_tx(txn_internal, signing_key.clone()).expect("Not able to sign the transaction.");
+
+            let final_txn = match signed_transaction {
+                BroadcastedTxn::Invoke(tx) => tx,
+                _ => panic!("Invalid Txn"),
+            };
+            internal_nonce += 1;
+            txns.push(final_txn);
         }
+        txns
     }
 
     fn sign_tx(&self, mut tx: BroadcastedTxn<Felt>, signing_key: SigningKey) -> anyhow::Result<BroadcastedTxn<Felt>> {
