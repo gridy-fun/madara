@@ -805,14 +805,20 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         signing_key: SigningKey,
     ) -> Vec<BroadcastedInvokeTxn<Felt>> {
         let mut internal_nonce = starting_nonce.clone().to_bigint();
-
         let mut txns: Vec<BroadcastedInvokeTxn<Felt>> = Vec::new();
 
-        for txn in call_vec {
-            // TODO: this is making multicall of 1 txns, remove mulitcall completely
+        let chunk_size = env::var("MADARA_GAME_MULTICALL_CHUNK_SIZE")
+            .expect("MADARA_GAME_MULTICALL_CHUNK_SIZE not set")
+            .parse::<usize>()
+            .unwrap();
+        // Convert the original Vec into an iterator of chunks and collect each chunk into a Vec
+        let chunks: Vec<Vec<Call>> =
+            call_vec.into_iter().collect::<Vec<_>>().chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
+
+        for chunk in chunks {
             let txn_internal = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
                 sender_address: sequencer_address,
-                calldata: Multicall::with_vec(vec![txn]).flatten().collect(),
+                calldata: Multicall::with_vec(chunk).flatten().collect(),
                 max_fee: Felt::from_str("100000000").unwrap(),
                 signature: vec![],
                 nonce: Felt::from(internal_nonce.clone()),
