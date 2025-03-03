@@ -1,10 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 
 #
 # Database version management script
 #
 # This script updates the database version tracking file when schema changes occur.
-# It's typically called by CI when a PR with the 'bump_db' label is merged.
+# It's typically called by CI when a PR with the 'db-migration' label is merged.
 #
 # Requirements: yq (https://github.com/mikefarah/yq/)
 #
@@ -64,7 +64,7 @@ CURRENT_VERSION=$(yq '.current_version' "$FILE")
 NEW_VERSION=$((CURRENT_VERSION + 1))
 
 # Update version and append to history
-yq -i -y ".current_version = $NEW_VERSION |
-  .versions = [{\"version\": $NEW_VERSION, \"pr\": $PR_NUMBER}] + .versions" "$FILE"
+yq e ".current_version = $NEW_VERSION |
+  .versions = [{\"version\": $NEW_VERSION, \"pr\": $PR_NUMBER}] + .versions" -i "$FILE"
 
 echo "Successfully updated DB version to ${NEW_VERSION} (PR #${PR_NUMBER})"
