@@ -17,16 +17,20 @@
 
 use crate::close_block::close_block;
 use crate::metrics::BlockProductionMetrics;
-use blockifier::blockifier::transaction_executor::{TransactionExecutor, BLOCK_STATE_ACCESS_ERR};
+use blockifier::blockifier::transaction_executor::{
+    TransactionExecutor, TransactionExecutorError, BLOCK_STATE_ACCESS_ERR,
+};
 use blockifier::bouncer::BouncerWeights;
 use blockifier::transaction::errors::TransactionExecutionError;
+use blockifier::transaction::objects::TransactionExecutionInfo;
 use finalize_execution_state::StateDiffToStateMapError;
 use mc_block_import::{BlockImportError, BlockImporter};
 use mc_db::db_block_id::DbBlockId;
 use mc_db::{MadaraBackend, MadaraStorageError};
+use mc_devnet::{Call, Multicall, Selector};
 use mc_exec::{BlockifierStateAdapter, ExecutionContext};
 use mc_mempool::header::make_pending_header;
-use mc_mempool::{L1DataProvider, MempoolProvider};
+use mc_mempool::{transaction_hash, L1DataProvider, MempoolProvider};
 use mp_block::{BlockId, BlockTag, MadaraPendingBlock, VisitedSegments};
 use mp_class::compile::ClassCompilationError;
 use mp_class::ConvertedClass;
@@ -36,10 +40,15 @@ use mp_state_update::{ContractStorageDiffItem, DeclaredClassItem, NonceUpdate, S
 use mp_transactions::TransactionWithHash;
 use mp_utils::service::ServiceContext;
 use opentelemetry::KeyValue;
+use rand::{thread_rng, Rng};
+use starknet::signers::SigningKey;
+use starknet_api::transaction::EventKey;
 use starknet_types_core::felt::Felt;
+use starknet_types_rpc::{BroadcastedInvokeTxn, BroadcastedTxn, InvokeTxnV1};
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::mem;
+use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -58,6 +67,15 @@ struct ContinueBlockStats {
     /// Rejected are txs that were unsucessful and but that were not revertible.
     pub n_rejected: usize,
 }
+
+// TODO: might wanna remove the 0 in the start
+const SPAWNED_BOT_EVENT_SELECTOR: &str = "0x2cd0383e81a65036ae8acc94ac89e891d1385ce01ae6cc127c27615f5420fa3";
+const BOMB_FOUND_EVENT_SELECTOR: &str = "0x111861367b42e77c11a98efb6d09a14c2dc470eee1a4d2c3c1e8c54015da2e5";
+const DIAMOND_FOUND_EVENT_SELECTOR: &str = "0x14528085c8fd64b9210572c5b6015468f8352c17c9c22f5b7aa62a55a56d8d7";
+const TILE_MINED_SELECTOR: &str = "0xd5efc9cfb6a4f6bb9eae0ce39d32480473877bb3f7a4eaa3944c881a2c8d25";
+const TILE_ALREADY_MINED_SELECTOR: &str = "0x1b74d97806c93468070e49a1626aba00f8e89dfb07246492af4566f898de982";
+const SUSPEND_BOT_SELECTOR: &str = "0x1dcca826eea45d96bfbf26e9aabf510e94c6de62d0ce5e5b6e60c51c7640af8";
+const REVIVE_BOT_SELECTOR: &str = "0x1d6a6a42fd13b206a721dbca3ae720621707ef3016850e2c5536244e5a7858a";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -291,6 +309,19 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
 
             // Execute the transactions.
             let all_results = self.executor.execute_txs(&txs_to_process_blockifier);
+
+            // println!(">>> Execution returned with : {:?} within {:?} ", all_results.len(), end);
+
+            // println!(">>> TXNS TO PROCESS BLOCKFIER LENGTH :  {:?} ", txs_to_process_blockifier.len());
+            // println!(">>> TXNS TO PROCESS BLOCKFIER :  {:?} ", txs_to_process_blockifier);
+
+            // let result: &Vec<Result<TransactionExecutionInfo, TransactionExecutorError>> = &all_results.as_ref();
+            // let x = result.iter().map(|x| x.as_ref().unwrap()).collect::<Vec<&TransactionExecutionInfo>>()[0];
+            // let n_steps = x.transaction_receipt.resources.vm_resources.n_steps;
+            // println!(">>> N_STEPS  {:?}", n_steps);
+
+            let _ress = self.listen_for_bot_events(&all_results).expect("Couldn't ingest Bot events");
+
             // When the bouncer cap is reached, blockifier will return fewer results than what we asked for.
             block_now_full = all_results.len() < txs_to_process_blockifier.len();
 
@@ -316,6 +347,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                         if let Some(class) = mem::take(&mut mempool_tx.converted_class) {
                             self.declared_classes.push(class);
                         }
+
+                        // TODO: add here the event listening logic
 
                         self.block
                             .inner
@@ -365,6 +398,166 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         );
 
         Ok(ContinueBlockResult { state_diff, visited_segments, bouncer_weights, stats, block_now_full })
+    }
+
+    pub fn listen_for_bot_events(
+        &mut self,
+        all_txns: &Vec<
+            Result<
+                blockifier::transaction::objects::TransactionExecutionInfo,
+                blockifier::blockifier::transaction_executor::TransactionExecutorError,
+            >,
+        >,
+    ) -> Result<(), Error> {
+        // search through all_txns and get SpawnedBot or BombFound events
+
+        let mut spawned_bots: Vec<String> = Vec::new();
+        let mut killed_bots: Vec<String> = Vec::new();
+
+        // events: [OrderedEvent { order: 0, event: EventContent { keys: [EventKey(0x2cd0383e81a65036ae8acc94ac89e891d1385ce01ae6cc127c27615f5420fa3)],
+        // data: EventData([0x7484e8e3af210b2ead47fa08c96f8d18b616169b350a8b75fe0dc4d2e01d493, 0x1c9, 0x66dbd884899534c3ba7216743e8d0a683e3c5b5b8cac37441f55c1b43a8019c]) } }],
+
+        // The logic below is written assuming that the event will have one key and 3 values.
+
+        for tx in all_txns {
+            if tx.is_err() {
+                continue;
+            }
+            let tx = tx.as_ref().unwrap();
+
+            let execute_call_info = &tx.execute_call_info.as_ref();
+
+            if let Some(execute_call) = execute_call_info {
+                let inner_calls: &Vec<blockifier::execution::call_info::CallInfo> = execute_call.inner_calls.as_ref();
+
+                for values in inner_calls {
+                    let ordered_events: &Vec<blockifier::execution::call_info::OrderedEvent> =
+                        values.execution.events.as_ref();
+
+                    for ordered_event in ordered_events.iter() {
+                        let event = ordered_event.event.to_owned();
+
+                        let spawned_bot_felt = Felt::from_str(SPAWNED_BOT_EVENT_SELECTOR)
+                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        let bomb_found_felt = Felt::from_str(BOMB_FOUND_EVENT_SELECTOR)
+                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        let diamond_found_felt = Felt::from_str(DIAMOND_FOUND_EVENT_SELECTOR)
+                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        let tile_mined_felt =
+                            Felt::from_str(TILE_MINED_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        let tile_already_mined_felt = Felt::from_str(TILE_ALREADY_MINED_SELECTOR)
+                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        let suspend_bot_felt =
+                            Felt::from_str(SUSPEND_BOT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        let revive_bot_felt =
+                            Felt::from_str(REVIVE_BOT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+
+                        for key in event.keys {
+                            // BombFound
+                            if key == EventKey(bomb_found_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                let bot_location = event.data.0[1].to_string();
+                                println!(
+                                    ">>> Event : BombFound by {:?} at {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                                    bot_location
+                                );
+                                killed_bots.push(bot_address);
+                            }
+                            // DiamondFound
+                            else if key == EventKey(diamond_found_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                let bot_points = event.data.0[1].to_string();
+                                let bot_location = event.data.0[2].to_string();
+                                println!(
+                                    ">>> Event : DiamondFound by {:?} at {:?} for {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                                    bot_location,
+                                    bot_points
+                                );
+                            }
+                            // TileMined
+                            else if key == EventKey(tile_mined_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                let points = event.data.0[1].to_string();
+                                let location = event.data.0[2].to_string();
+                                println!(
+                                    ">>> Event : TileMined by {:?} at {:?} for {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                                    location,
+                                    points
+                                );
+                                self.backend
+                                    .game_update_metadata(|meta| {
+                                        meta.tiles_mined += 1;
+                                    })
+                                    .expect("could not update the tiles mined number");
+                            }
+                            // TileAlreadyMined
+                            else if key == EventKey(tile_already_mined_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                let bot_location = event.data.0[1].to_string();
+                                println!(
+                                    ">>> Event : TileAlreadyMined {:?} at {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                                    bot_location
+                                );
+                            }
+                            // SpawnedBot
+                            else if key == EventKey(spawned_bot_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                let player = event.data.0[1].to_string();
+                                let bot_location = event.data.0[2].to_string();
+                                println!(
+                                    ">>> Event : SpawnedBot {:?} at {:?} by {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                                    bot_location,
+                                    Felt::from_str(player.as_str()).expect("Could not get address")
+                                );
+                                spawned_bots.push(bot_address);
+                            }
+                            // SuspendBot
+                            else if key == EventKey(suspend_bot_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                println!(
+                                    ">>> Event : SuspendBot {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address")
+                                );
+                                // TODO: add kill bot here if needed.
+                            }
+                            // ReviveBot
+                            else if key == EventKey(revive_bot_felt) {
+                                let bot_address = event.data.0[0].to_string();
+                                println!(
+                                    ">>> Event : ReviveBot {:?}",
+                                    Felt::from_str(bot_address.as_str()).expect("Could not get address")
+                                );
+                                // TODO: add spawned bot here if needed.
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Kill all the bots !
+        // TODO: these are multiple DB operations, can it be clubbed to a single operation
+        for killed_bot in killed_bots {
+            let _ = self.backend.game_delete_bot_address(&killed_bot.as_str()).expect("Could not remove the bot");
+        }
+
+        // Add new bots !
+        for spawned_bot in spawned_bots {
+            let _ = self.backend.game_add_bot_address(&spawned_bot.as_str()).expect("Could not add the bot");
+        }
+
+        Ok(())
     }
 
     /// Closes the current block and prepares for the next one
@@ -481,6 +674,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
 
     #[tracing::instrument(skip(self), fields(module = "BlockProductionTask"))]
     pub async fn on_pending_time_tick(&mut self) -> Result<bool, Error> {
+        dotenv().ok();
+        let start = Instant::now();
         let current_pending_tick = self.current_pending_tick;
         if current_pending_tick == 0 {
             return Ok(false);
@@ -527,6 +722,48 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // do not forget to flush :)
         self.backend.flush().map_err(|err| BlockImportError::Internal(format!("DB flushing error: {err:#}").into()))?;
 
+        // TODO: Measure the transactions time --------------------------------------------------
+        // TODO: Do all of it inside a function
+        // =========================================================================================
+        // Execute BOT transactions :
+
+        let game_width = env::var("MADARA_GAME_WIDTH").expect("MADARA_GAME_WIDTH not set").parse::<u64>().unwrap();
+        let game_height = env::var("MADARA_GAME_HEIGHT").expect("MADARA_GAME_HEIGHT not set").parse::<u64>().unwrap();
+
+        println!(">>> Game width : {:?} and height : {:?}", game_width, game_height);
+
+        let area = game_width * game_height;
+
+        let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
+        let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
+        if game_metadata.tiles_mined < area && bot_addresses.len() > 0 {
+            println!(">>> Triggering bot transactions");
+            println!(">>> Current Tiles mined : {:?} vs total to be mined : {:?}", game_metadata.tiles_mined, area);
+            let addresses_clone = bot_addresses.clone();
+
+            // let c = bot_addresses
+            //     .iter()
+            //     .map(|x| Felt::from_str(x).expect("could not convert string to felt"))
+            //     .collect::<Vec<_>>();
+
+            // println!(">>> DB bots list : {:?}", c);
+            // Do nothing if 0 bots to execute
+            if bot_addresses.is_empty() {
+                return Ok(false);
+            }
+            // TODO: check if game is active or not
+            // TODO: what is bot is disabled ?
+
+            let txns = self.generate_txns(addresses_clone);
+            println!(">>> Number of txns generated : {:?}", txns.len());
+            txns.iter().for_each(|txn| {
+                self.mempool.accept_invoke_tx(txn.clone()).expect("Unable to accept invoke tx");
+            });
+            // self.mempool.accept_invoke_tx(txn).expect("Unable to accept invoke tx");
+            println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
+
+            // =========================================================================================
+        }
         Ok(false)
     }
 
@@ -617,6 +854,102 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         Ok(())
     }
 
+    fn generate_txns(&self, contract_addresses: Vec<String>) -> Vec<BroadcastedInvokeTxn<Felt>> {
+        let x = env::var("MADARA_GAME_SEQUENCER_ADDRESS").unwrap();
+        let y = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEY").unwrap();
+        let z = env::var("MADARA_GAME_CONTRACT_ADDRESS").unwrap();
+
+        println!(">>> SEQUENCER ADDRESS {:?}", x);
+        println!(">>> SEQUENCER PRIVATE KEY {:?}", y);
+        println!(">>> GAME ADDRESS {:?}", z);
+
+        let sequencer_address = Felt::from_hex(&x.as_str()).expect("Unable to extract public key from hex");
+        let sequencer_priv_key = Felt::from_hex(&y.as_str()).expect("Unable to extract priv key from hex");
+        let game_address = Felt::from_hex(&z.as_str()).expect("Unable to extract public key from hex");
+
+        let signing_key = SigningKey::from_secret_scalar(sequencer_priv_key);
+
+        let nonce = self
+            .backend
+            .get_contract_nonce_at(&DbBlockId::Pending, &sequencer_address)
+            .expect("Unable to fetch nonce from the block.")
+            // if nonce is not found, use 0
+            .unwrap_or(Felt::from(0));
+
+        println!(">>> TXN NONCE {:?}", nonce);
+
+        let mut call_vec = Vec::new();
+        for address in contract_addresses {
+            let random_seed: u64 = thread_rng().gen();
+            call_vec.push(Call {
+                to: game_address,
+                selector: Selector::from("mine"),
+                calldata: vec![Felt::from_str(&address).unwrap(), Felt::from(random_seed)],
+            })
+        }
+
+        let txns = self.create_txns(sequencer_address, nonce, call_vec, signing_key);
+        txns
+    }
+
+    fn create_txns(
+        &self,
+        sequencer_address: Felt,
+        starting_nonce: Felt,
+        call_vec: Vec<Call>,
+        signing_key: SigningKey,
+    ) -> Vec<BroadcastedInvokeTxn<Felt>> {
+        let mut internal_nonce = starting_nonce.clone().to_bigint();
+        let mut txns: Vec<BroadcastedInvokeTxn<Felt>> = Vec::new();
+
+        let chunk_size = env::var("MADARA_GAME_MULTICALL_CHUNK_SIZE")
+            .expect("MADARA_GAME_MULTICALL_CHUNK_SIZE not set")
+            .parse::<usize>()
+            .unwrap();
+        // Convert the original Vec into an iterator of chunks and collect each chunk into a Vec
+        let chunks: Vec<Vec<Call>> =
+            call_vec.into_iter().collect::<Vec<_>>().chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
+
+        for chunk in chunks {
+            let txn_internal = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
+                sender_address: sequencer_address,
+                calldata: Multicall::with_vec(chunk).flatten().collect(),
+                max_fee: Felt::from_str("100000000").unwrap(),
+                signature: vec![],
+                nonce: Felt::from(internal_nonce.clone()),
+            }));
+
+            let signed_transaction =
+                self.sign_tx(txn_internal, signing_key.clone()).expect("Not able to sign the transaction.");
+
+            let final_txn = match signed_transaction {
+                BroadcastedTxn::Invoke(tx) => tx,
+                _ => panic!("Invalid Txn"),
+            };
+            internal_nonce += 1;
+            txns.push(final_txn);
+        }
+        txns
+    }
+
+    fn sign_tx(&self, mut tx: BroadcastedTxn<Felt>, signing_key: SigningKey) -> anyhow::Result<BroadcastedTxn<Felt>> {
+        let (blockifier_tx, _) = BroadcastedTxn::into_blockifier(
+            tx.clone(),
+            self.backend.chain_config().chain_id.to_felt(),
+            self.backend.chain_config().latest_protocol_version,
+        )?;
+        let signature = signing_key.sign(&transaction_hash(&blockifier_tx))?;
+        let tx_signature = match &mut tx {
+            BroadcastedTxn::Invoke(tx) => match tx {
+                BroadcastedInvokeTxn::V1(tx) => &mut tx.signature,
+                _ => panic!("Invalid Txn"),
+            },
+            _ => panic!("Invalid Txn"),
+        };
+        *tx_signature = vec![signature.r, signature.s];
+        Ok(tx)
+    }
+
     fn block_n(&self) -> u64 {
         self.executor.block_context.block_info().block_number.0
     }
@@ -624,6 +957,128 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use starknet_types_core::felt::Felt;
+
+    // Helper function to create test bots
+    fn create_test_bots(count: i64) -> Vec<Felt> {
+        // format : 0x<number>
+        (0..count).map(|i| Felt::from_str(&format!("0x{i}")).unwrap()).collect()
+    }
+
+    // Helper function to verify distribution properties
+    fn verify_distribution(result: &Vec<Felt>, expected_len: i64, original_bots: &Vec<Felt>) {
+        assert_eq!(result.len(), expected_len as usize, "Result length should match MINES_PER_TRANSACTION");
+
+        for bot in result {
+            assert!(original_bots.contains(bot), "Every bot in result should exist in original list");
+        }
+    }
+
+    // These tests can be more stressing
+    // #[test]
+    // fn test_less_bots_than_mines() {
+    //     let num_bots: i64 = 137;
+    //     let bots = create_test_bots(num_bots); // 100 bots < 500 MINES_PER_TRANSACTION
+    //     let start_index = 124;
+
+    //     // Array : 51 to 100, then 1 to 100 4 times, then 1 to 50
+
+    //     let (result, new_start_index) = get_bots_list();
+
+    //     verify_distribution(&result, MINES_PER_TRANSACTION, &bots);
+
+    //     // Each bot should appear multiple times
+    //     let repetitions = MINES_PER_TRANSACTION / num_bots;
+    //     let mut count_map = std::collections::HashMap::new();
+    //     for bot in &result {
+    //         *count_map.entry(bot).or_insert(0) += 1;
+    //     }
+
+    //     println!("test_less_bots_than_mines : {:?}", result);
+    //     println!("test_less_bots_than_mines last index : {:?}", new_start_index);
+
+    //     // Check if each bot appears at least the minimum number of times
+    //     for count in count_map.values() {
+    //         assert!(*count >= repetitions, "Each bot should appear at least {} times", repetitions);
+    //     }
+    // }
+
+    // #[test]
+    // fn test_equal_bots_to_mines() {
+    //     let bots = create_test_bots(MINES_PER_TRANSACTION);
+    //     let start_index = 36;
+
+    //     let (result, new_start_index) = get_bots_list(bots.clone(), start_index);
+
+    //     verify_distribution(&result, MINES_PER_TRANSACTION, &bots);
+
+    //     // Each bot should appear exactly once
+    //     let mut count_map = std::collections::HashMap::new();
+    //     for bot in &result {
+    //         *count_map.entry(bot).or_insert(0) += 1;
+    //     }
+
+    //     println!("test_equal_bots_to_mines : {:?}", result);
+    //     println!("test_equal_bots_to_mines last index : {:?}", new_start_index);
+
+    //     for count in count_map.values() {
+    //         assert_eq!(*count, 1, "Each bot should appear exactly once");
+    //     }
+    // }
+
+    // #[test]
+    // fn test_more_bots_than_mines() {
+    //     let bots = create_test_bots(3110); // 1000 bots > 500 MINES_PER_TRANSACTION
+    //     let start_index = 457;
+
+    //     let (result, new_start_index) = get_bots_list(bots.clone(), start_index);
+
+    //     verify_distribution(&result, MINES_PER_TRANSACTION, &bots);
+
+    //     // Each bot should appear at most once
+    //     let mut count_map = std::collections::HashMap::new();
+    //     for bot in &result {
+    //         *count_map.entry(bot).or_insert(0) += 1;
+    //     }
+
+    //     println!("test_more_bots_than_mines : {:?}", result);
+    //     println!("test_more_bots_than_mines last index : {:?}", new_start_index);
+
+    //     for count in count_map.values() {
+    //         assert_eq!(*count, 1, "Each bot should appear exactly once");
+    //     }
+
+    //     // Verify that we start from last_index
+    //     assert_eq!(result[0], bots[start_index as usize], "First bot should match the last_index position");
+    // }
+
+    // #[test]
+    // fn test_empty_bots_list() {
+    //     let bots = Vec::new();
+    //     let last_index = 0;
+
+    //     let (result, new_index) = get_bots_list(bots, last_index);
+
+    //     assert_eq!(result.len(), 0, "Result should be empty for empty input");
+    //     assert_eq!(new_index, 0, "New index should be 0 for empty input");
+    // }
+
+    // #[test]
+    // fn test_index_wrapping() {
+    //     let bots = create_test_bots(200);
+    //     let last_index = 150; // Near the end of the list
+
+    //     let (result, new_index) = get_bots_list(bots.clone(), last_index);
+
+    //     verify_distribution(&result, MINES_PER_TRANSACTION, &bots);
+
+    //     // Verify that the list wraps around correctly
+    //     assert!(new_index < bots.len() as i64, "New index should wrap around");
+    // }
+
     use std::{collections::HashMap, sync::Arc};
 
     use blockifier::{
@@ -643,7 +1098,6 @@ mod tests {
         core::{ClassHash, ContractAddress, PatriciaKey},
         felt, patricia_key,
     };
-    use starknet_types_core::felt::Felt;
 
     use crate::{
         finalize_execution_state::state_map_to_state_diff, metrics::BlockProductionMetrics, BlockProductionTask,
