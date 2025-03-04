@@ -70,9 +70,12 @@ where
         })?;
     }
 
-    settlement_client.listen_for_update_state_events(backend, ctx, l1_block_metrics.clone()).await.map_err(|e| {
-        SettlementClientError::StateEventListener(format!("Failed to listen for update state events: {}", e))
-    })?;
+    match settlement_client.listen_for_update_state_events(backend, ctx, l1_block_metrics.clone()).await {
+        Ok(_) => {}
+        Err(e) => {
+            tracing::error!("Failed to listen for update state events: {}", e);
+        }
+    };
 
     Ok(())
 }
