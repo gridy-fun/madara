@@ -87,7 +87,7 @@ impl StarknetEventStream {
             Ok(emitted_event) => Ok((emitted_event, filter)),
             Err(e) => {
                 // Log the error if you have a logging system
-                eprintln!("Error in fetch_events: {:?}", e);
+                tracing::error!("Error in fetch_events: {:?}", e);
 
                 // Return None and the unchanged filter on error
                 Ok((None, filter))
