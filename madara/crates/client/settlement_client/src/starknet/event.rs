@@ -42,43 +42,57 @@ impl StarknetEventStream {
         let mut page_indicator = false;
         let mut continuation_token: Option<String> = None;
 
-        while !page_indicator {
-            let events = provider
-                .get_events(
-                    EventFilter {
-                        from_block: filter.from_block,
-                        to_block: filter.to_block,
-                        address: filter.address,
-                        keys: filter.keys.clone(),
-                    },
-                    continuation_token.clone(),
-                    1000,
-                )
-                .await?;
+        // Try-catch block to handle errors
+        match async {
+            while !page_indicator {
+                let events = provider
+                    .get_events(
+                        EventFilter {
+                            from_block: filter.from_block,
+                            to_block: filter.to_block,
+                            address: filter.address,
+                            keys: filter.keys.clone(),
+                        },
+                        continuation_token.clone(),
+                        1000,
+                    )
+                    .await?;
 
-            event_vec.extend(events.events);
-            if let Some(token) = events.continuation_token {
-                continuation_token = Some(token);
-            } else {
-                page_indicator = true;
-            }
-        }
-
-        let latest_block = provider.block_number().await?;
-
-        for event in event_vec.iter() {
-            if let Some(nonce) = event.data.get(1) {
-                if !processed_events.contains(nonce) {
-                    processed_events.insert(*nonce);
-                    return Ok((Some(event.clone()), filter));
+                event_vec.extend(events.events);
+                if let Some(token) = events.continuation_token {
+                    continuation_token = Some(token);
+                } else {
+                    page_indicator = true;
                 }
             }
+
+            let latest_block = provider.block_number().await?;
+
+            for event in event_vec.iter() {
+                if let Some(nonce) = event.data.get(1) {
+                    if !processed_events.contains(nonce) {
+                        processed_events.insert(*nonce);
+                        return Ok::<_, anyhow::Error>(Some(event.clone()));
+                    }
+                }
+            }
+
+            filter.from_block = filter.to_block;
+            filter.to_block = Some(BlockId::Number(latest_block));
+
+            Ok::<_, anyhow::Error>(None)
         }
+        .await
+        {
+            Ok(emitted_event) => Ok((emitted_event, filter)),
+            Err(e) => {
+                // Log the error if you have a logging system
+                eprintln!("Error in fetch_events: {:?}", e);
 
-        filter.from_block = filter.to_block;
-        filter.to_block = Some(BlockId::Number(latest_block));
-
-        Ok((None, filter))
+                // Return None and the unchanged filter on error
+                Ok((None, filter))
+            }
+        }
     }
 }
 
