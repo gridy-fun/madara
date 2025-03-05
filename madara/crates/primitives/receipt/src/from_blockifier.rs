@@ -46,14 +46,20 @@ pub enum L1HandlerMessageError {
     InvalidNonce,
 }
 
+/// An L1-to-L2 message sent from Ethereum to Starknet.
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MsgToL2 {
+    /// The sender address as a Felt
     pub from_address: Felt,
+    /// The Starknet contract address that handles the message
     pub to_address: Felt,
+    /// The entrypoint selector on the handler contract
     pub selector: Felt,
+    /// The calldata to be used for the handler contract invocation
     pub payload: Vec<Felt>,
-    pub nonce: Option<Felt>,
+    /// The nonce for deduplication
+    pub nonce: u64,
 }
 
 impl MsgToL2 {
@@ -62,12 +68,41 @@ impl MsgToL2 {
         hasher.update([0u8; 12]); // Padding
         hasher.update(self.from_address.to_bytes_be());
         hasher.update(self.to_address.to_bytes_be());
-        hasher.update(self.nonce.unwrap_or_default().to_bytes_be());
+        hasher.update(self.nonce.to_be_bytes());
         hasher.update(self.selector.to_bytes_be());
         hasher.update([0u8; 24]); // Padding
         hasher.update((self.payload.len() as u64).to_be_bytes());
         self.payload.iter().for_each(|felt| hasher.update(felt.to_bytes_be()));
         H256::from_slice(&hasher.finalize())
+    }
+
+    /// Calculates the message hash following the same algorithm as the official implementation
+    pub fn hash(&self) -> [u8; 32] {
+        let mut hasher = Keccak256::new();
+
+        // FromAddress (as Felt)
+        hasher.update(self.from_address.to_bytes_be());
+
+        // ToAddress
+        hasher.update(self.to_address.to_bytes_be());
+
+        // Nonce
+        hasher.update([0u8; 24]);
+        hasher.update(self.nonce.to_be_bytes());
+
+        // Selector
+        hasher.update(self.selector.to_bytes_be());
+
+        // Payload.length
+        hasher.update([0u8; 24]);
+        hasher.update((self.payload.len() as u64).to_be_bytes());
+
+        // Payload
+        for item in &self.payload {
+            hasher.update(item.to_bytes_be());
+        }
+
+        hasher.finalize().into()
     }
 }
 
@@ -84,7 +119,7 @@ impl TryFrom<&mp_transactions::L1HandlerTransaction> for MsgToL2 {
             to_address: tx.contract_address,
             selector: tx.entry_point_selector,
             payload: payload.to_vec(),
-            nonce: Some(tx.nonce.into()),
+            nonce: tx.nonce,
         })
     }
 }
@@ -94,7 +129,8 @@ fn get_l1_handler_message_hash(tx: &L1HandlerTransaction) -> Result<H256, L1Hand
 
     let from_address = (*from_address).try_into().map_err(|_| L1HandlerMessageError::FromAddressOutOfRange)?;
 
-    let nonce = Some(tx.tx.nonce.0);
+    let nonce = tx.tx.nonce.0;
+    let nonce = u64::try_from(nonce).map_err(|_| L1HandlerMessageError::InvalidNonce)?;
 
     let message = MsgToL2 {
         from_address,
@@ -103,7 +139,7 @@ fn get_l1_handler_message_hash(tx: &L1HandlerTransaction) -> Result<H256, L1Hand
         payload: payload.into(),
         nonce,
     };
-    Ok(H256::from_slice(message.compute_hash().as_bytes()))
+    Ok(H256::from_slice(&message.hash()))
 }
 
 fn recursive_call_info_iter(res: &TransactionExecutionInfo) -> impl Iterator<Item = &CallInfo> {
@@ -321,7 +357,7 @@ mod test {
             to_address: Felt::from(2),
             selector: Felt::from(3),
             payload: vec![Felt::from(4), Felt::from(5), Felt::from(6)],
-            nonce: Some(Felt::from(7)),
+            nonce: 7,
         };
 
         let hash = msg.compute_hash();

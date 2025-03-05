@@ -85,7 +85,7 @@ where
                 .get_l1_to_l2_message_cancellations(&event_hash)
                 .await
                 .map_err(|e| SettlementClientError::InvalidResponse(format!("Failed to check cancellation: {}", e)))?;
-            if cancellation_timestamp != Felt::ZERO {
+            if cancellation_timestamp == Felt::TWO {
                 tracing::info!("Message was cancelled in block at timestamp: {:?}", cancellation_timestamp);
                 handle_cancelled_message(backend, tx_nonce).map_err(|e| {
                     SettlementClientError::DatabaseError(format!("Failed to handle cancelled message: {}", e))

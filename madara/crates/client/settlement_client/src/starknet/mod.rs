@@ -245,7 +245,7 @@ impl SettlementClientTrait for StarknetClient {
             .call(
                 FunctionCall {
                     contract_address: self.l2_core_contract,
-                    entry_point_selector: get_selector_from_name("l1_to_l2_message_cancellations").map_err(
+                    entry_point_selector: get_selector_from_name("appchain_to_sn_messages").map_err(
                         |e| -> SettlementClientError {
                             StarknetClientError::L1ToL2Messaging {
                                 message: format!("Failed to get l1_to_l2_message_cancellations selector: {}", e),
