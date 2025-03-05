@@ -51,7 +51,9 @@ impl Analytics {
         self.meter_provider = Some(self.init_metric_provider()?);
 
         let layer = OpenTelemetryTracingBridge::new(&logger_provider);
-        tracing_subscriber.with(OpenTelemetryLayer::new(tracer)).with(layer).init();
+        tracing_subscriber.with(OpenTelemetryLayer::new(tracer)).init();
+
+        tracing::info!("OTEL initialized");
         Ok(())
     }
 
