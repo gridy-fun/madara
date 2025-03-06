@@ -265,7 +265,7 @@ impl SettlementClientTrait for StarknetClient {
                 .into()
             })?;
 
-        if call_res.len() != 2 {
+        if call_res.len() != 1 {
             return Err(SettlementClientError::Starknet(
                 StarknetClientError::InvalidResponseFormat {
                     message: "l1_to_l2_message_cancellations should return exactly 2 values".to_string(),
