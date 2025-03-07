@@ -900,6 +900,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     ) -> Vec<BroadcastedInvokeTxn> {
         let mut internal_nonce = starting_nonce.clone().to_bigint();
         let mut txns: Vec<BroadcastedInvokeTxn> = Vec::new();
+        let max_fee = env::var("MADARA_GAME_MAX_FEE").unwrap();
 
         let chunk_size = env::var("MADARA_GAME_MULTICALL_CHUNK_SIZE")
             .expect("MADARA_GAME_MULTICALL_CHUNK_SIZE not set")
@@ -913,7 +914,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             let txn_internal = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
                 sender_address: sequencer_address,
                 calldata: Multicall::with_vec(chunk).flatten().collect(),
-                max_fee: Felt::from_str("100000000").unwrap(),
+                max_fee: Felt::from_str(max_fee.as_str()).unwrap(),
                 signature: vec![],
                 nonce: Felt::from(internal_nonce.clone()),
             }));
