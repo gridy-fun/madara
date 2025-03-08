@@ -42,6 +42,8 @@ where
         .ok_or_else(|| {
             SettlementClientError::MessagingSync("Last synced event block should never be None".to_string())
         })?;
+    
+    tracing::info!("⟠ Last synced event block: {:?}", last_synced_event_block);
 
     let stream = settlement_client
         .get_messaging_stream(last_synced_event_block)
@@ -56,6 +58,7 @@ where
                 SettlementClientError::InvalidData(format!("Failed to parse message transaction: {}", e))
             })?;
             let tx_nonce = tx.nonce;
+            println!("entire tx: {:?}", tx);
 
             // Skip if already processed
             if backend
@@ -63,7 +66,8 @@ where
                 .map_err(|e| SettlementClientError::DatabaseError(format!("Failed to check nonce: {}", e)))?
             {
                 tracing::info!("Event already processed");
-                return Ok(());
+                // return Ok(());
+                continue;
             }
 
             tracing::info!(
@@ -124,6 +128,7 @@ where
                 }
             }
         }
+        tracing::info!("Done processing all events");
     }
 
     Ok(())
