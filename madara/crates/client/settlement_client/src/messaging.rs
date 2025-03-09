@@ -42,7 +42,7 @@ where
         .ok_or_else(|| {
             SettlementClientError::MessagingSync("Last synced event block should never be None".to_string())
         })?;
-    
+
     tracing::info!("⟠ Last synced event block: {:?}", last_synced_event_block);
 
     let stream = settlement_client

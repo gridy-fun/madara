@@ -20,6 +20,7 @@ use crate::metrics::BlockProductionMetrics;
 use blockifier::blockifier::transaction_executor::{TransactionExecutor, BLOCK_STATE_ACCESS_ERR};
 use blockifier::bouncer::BouncerWeights;
 use blockifier::transaction::errors::TransactionExecutionError;
+use extract_events::extract_all_events;
 use finalize_execution_state::StateDiffToStateMapError;
 use mc_block_import::{BlockImportError, BlockImporter};
 use mc_db::db_block_id::DbBlockId;
@@ -50,6 +51,7 @@ use std::time::Instant;
 use std::{env, mem};
 
 mod close_block;
+pub mod extract_events;
 mod finalize_execution_state;
 pub mod metrics;
 
@@ -310,7 +312,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
 
             // println!(">>> Execution returned with : {:?} within {:?} ", all_results.len(), end);
 
-            // println!(">>> TXNS TO PROCESS BLOCKFIER LENGTH :  {:?} ", txs_to_process_blockifier.len());
             // println!(">>> TXNS TO PROCESS BLOCKFIER :  {:?} ", txs_to_process_blockifier);
 
             // let result: &Vec<Result<TransactionExecutionInfo, TransactionExecutorError>> = &all_results.as_ref();
@@ -423,122 +424,113 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             }
             let tx = tx.as_ref().unwrap();
 
-            let execute_call_info = &tx.execute_call_info.as_ref();
+            let ordered_events = extract_all_events(tx);
 
-            if let Some(execute_call) = execute_call_info {
-                let inner_calls: &Vec<blockifier::execution::call_info::CallInfo> = execute_call.inner_calls.as_ref();
+            for ordered_event in ordered_events.iter() {
+                let event = ordered_event.event.to_owned();
 
-                for values in inner_calls {
-                    let ordered_events: &Vec<blockifier::execution::call_info::OrderedEvent> =
-                        values.execution.events.as_ref();
+                let spawned_bot_felt =
+                    Felt::from_str(SPAWNED_BOT_EVENT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                    for ordered_event in ordered_events.iter() {
-                        let event = ordered_event.event.to_owned();
+                let bomb_found_felt =
+                    Felt::from_str(BOMB_FOUND_EVENT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                        let spawned_bot_felt = Felt::from_str(SPAWNED_BOT_EVENT_SELECTOR)
-                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+                let diamond_found_felt =
+                    Felt::from_str(DIAMOND_FOUND_EVENT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                        let bomb_found_felt = Felt::from_str(BOMB_FOUND_EVENT_SELECTOR)
-                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+                let tile_mined_felt =
+                    Felt::from_str(TILE_MINED_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                        let diamond_found_felt = Felt::from_str(DIAMOND_FOUND_EVENT_SELECTOR)
-                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+                let tile_already_mined_felt =
+                    Felt::from_str(TILE_ALREADY_MINED_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                        let tile_mined_felt =
-                            Felt::from_str(TILE_MINED_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+                let suspend_bot_felt =
+                    Felt::from_str(SUSPEND_BOT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                        let tile_already_mined_felt = Felt::from_str(TILE_ALREADY_MINED_SELECTOR)
-                            .expect("Unable to convert selector string to felt"); // Or however you get your Felt value
+                let revive_bot_felt =
+                    Felt::from_str(REVIVE_BOT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
 
-                        let suspend_bot_felt =
-                            Felt::from_str(SUSPEND_BOT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
-
-                        let revive_bot_felt =
-                            Felt::from_str(REVIVE_BOT_SELECTOR).expect("Unable to convert selector string to felt"); // Or however you get your Felt value
-
-                        for key in event.keys {
-                            // BombFound
-                            if key == EventKey(bomb_found_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                let bot_location = event.data.0[1].to_string();
-                                println!(
-                                    ">>> Event : BombFound by {:?} at {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
-                                    bot_location
-                                );
-                                killed_bots.push(bot_address);
-                            }
-                            // DiamondFound
-                            else if key == EventKey(diamond_found_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                let bot_points = event.data.0[1].to_string();
-                                let bot_location = event.data.0[2].to_string();
-                                println!(
-                                    ">>> Event : DiamondFound by {:?} at {:?} for {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
-                                    bot_location,
-                                    bot_points
-                                );
-                            }
-                            // TileMined
-                            else if key == EventKey(tile_mined_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                let points = event.data.0[1].to_string();
-                                let location = event.data.0[2].to_string();
-                                println!(
-                                    ">>> Event : TileMined by {:?} at {:?} for {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
-                                    location,
-                                    points
-                                );
-                                self.backend
-                                    .game_update_metadata(|meta| {
-                                        meta.tiles_mined += 1;
-                                    })
-                                    .expect("could not update the tiles mined number");
-                            }
-                            // TileAlreadyMined
-                            else if key == EventKey(tile_already_mined_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                let bot_location = event.data.0[1].to_string();
-                                println!(
-                                    ">>> Event : TileAlreadyMined {:?} at {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
-                                    bot_location
-                                );
-                            }
-                            // SpawnedBot
-                            else if key == EventKey(spawned_bot_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                let player = event.data.0[1].to_string();
-                                let bot_location = event.data.0[2].to_string();
-                                println!(
-                                    ">>> Event : SpawnedBot {:?} at {:?} by {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address"),
-                                    bot_location,
-                                    Felt::from_str(player.as_str()).expect("Could not get address")
-                                );
-                                spawned_bots.push(bot_address);
-                            }
-                            // SuspendBot
-                            else if key == EventKey(suspend_bot_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                println!(
-                                    ">>> Event : SuspendBot {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address")
-                                );
-                                // TODO: add kill bot here if needed.
-                            }
-                            // ReviveBot
-                            else if key == EventKey(revive_bot_felt) {
-                                let bot_address = event.data.0[0].to_string();
-                                println!(
-                                    ">>> Event : ReviveBot {:?}",
-                                    Felt::from_str(bot_address.as_str()).expect("Could not get address")
-                                );
-                                // TODO: add spawned bot here if needed.
-                            }
-                        }
+                for key in event.keys {
+                    // BombFound
+                    if key == EventKey(bomb_found_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        let bot_location = event.data.0[1].to_string();
+                        println!(
+                            ">>> Event : BombFound by {:?} at {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                            bot_location
+                        );
+                        killed_bots.push(bot_address);
+                    }
+                    // DiamondFound
+                    else if key == EventKey(diamond_found_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        let bot_points = event.data.0[1].to_string();
+                        let bot_location = event.data.0[2].to_string();
+                        println!(
+                            ">>> Event : DiamondFound by {:?} at {:?} for {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                            bot_location,
+                            bot_points
+                        );
+                    }
+                    // TileMined
+                    else if key == EventKey(tile_mined_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        let points = event.data.0[1].to_string();
+                        let location = event.data.0[2].to_string();
+                        println!(
+                            ">>> Event : TileMined by {:?} at {:?} for {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                            location,
+                            points
+                        );
+                        self.backend
+                            .game_update_metadata(|meta| {
+                                meta.tiles_mined += 1;
+                            })
+                            .expect("could not update the tiles mined number");
+                    }
+                    // TileAlreadyMined
+                    else if key == EventKey(tile_already_mined_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        let bot_location = event.data.0[1].to_string();
+                        println!(
+                            ">>> Event : TileAlreadyMined {:?} at {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                            bot_location
+                        );
+                    }
+                    // SpawnedBot
+                    else if key == EventKey(spawned_bot_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        let player = event.data.0[1].to_string();
+                        let bot_location = event.data.0[2].to_string();
+                        println!(
+                            ">>> Event : SpawnedBot {:?} at {:?} by {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address"),
+                            bot_location,
+                            Felt::from_str(player.as_str()).expect("Could not get address")
+                        );
+                        spawned_bots.push(bot_address);
+                    }
+                    // SuspendBot
+                    else if key == EventKey(suspend_bot_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        println!(
+                            ">>> Event : SuspendBot {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address")
+                        );
+                        // TODO: add kill bot here if needed.
+                    }
+                    // ReviveBot
+                    else if key == EventKey(revive_bot_felt) {
+                        let bot_address = event.data.0[0].to_string();
+                        println!(
+                            ">>> Event : ReviveBot {:?}",
+                            Felt::from_str(bot_address.as_str()).expect("Could not get address")
+                        );
+                        // TODO: add spawned bot here if needed.
                     }
                 }
             }
@@ -728,8 +720,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let game_width = env::var("MADARA_GAME_WIDTH").expect("MADARA_GAME_WIDTH not set").parse::<u64>().unwrap();
         let game_height = env::var("MADARA_GAME_HEIGHT").expect("MADARA_GAME_HEIGHT not set").parse::<u64>().unwrap();
 
-        println!(">>> Game width : {:?} and height : {:?}", game_width, game_height);
-
         let area = game_width * game_height;
 
         let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
@@ -737,6 +727,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         if game_metadata.tiles_mined < area && bot_addresses.len() > 0 {
             println!(">>> Triggering bot transactions");
             println!(">>> Current Tiles mined : {:?} vs total to be mined : {:?}", game_metadata.tiles_mined, area);
+            println!(">>> Current Total Bots : {:?}", bot_addresses.len());
             let addresses_clone = bot_addresses.clone();
 
             // let c = bot_addresses
@@ -858,10 +849,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let y = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEY").unwrap();
         let z = env::var("MADARA_GAME_CONTRACT_ADDRESS").unwrap();
 
-        println!(">>> SEQUENCER ADDRESS {:?}", x);
-        println!(">>> SEQUENCER PRIVATE KEY {:?}", y);
-        println!(">>> GAME ADDRESS {:?}", z);
-
         let sequencer_address = Felt::from_hex(&x.as_str()).expect("Unable to extract public key from hex");
         let sequencer_priv_key = Felt::from_hex(&y.as_str()).expect("Unable to extract priv key from hex");
         let game_address = Felt::from_hex(&z.as_str()).expect("Unable to extract public key from hex");
@@ -874,8 +861,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             .expect("Unable to fetch nonce from the block.")
             // if nonce is not found, use 0
             .unwrap_or(Felt::from(0));
-
-        println!(">>> TXN NONCE {:?}", nonce);
 
         let mut call_vec = Vec::new();
         for address in contract_addresses {
