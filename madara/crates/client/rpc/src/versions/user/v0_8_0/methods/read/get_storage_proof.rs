@@ -22,7 +22,8 @@ fn saturating_sum(iter: impl IntoIterator<Item = usize>) -> usize {
 fn path_to_felt(path: &BitSlice<u8, Msb0>) -> Felt {
     let mut arr = [0u8; 32];
     let slice = &mut BitSlice::from_slice_mut(&mut arr)[5..];
-    slice[..path.len()].copy_from_bitslice(path);
+    let slice_len = slice.len();
+    slice[slice_len - path.len()..].copy_from_bitslice(path);
     Felt::from_bytes_be(&arr)
 }
 
@@ -150,6 +151,24 @@ pub fn get_storage_proof(
         bonsai_identifier::CLASS,
         class_hashes,
     )?;
+
+    let mut contract_root_hashes = std::collections::HashMap::new();
+    let contracts_storage_proofs = contracts_storage_keys
+        .into_iter()
+        .map(|ContractStorageKeysItem { contract_address, storage_keys }| {
+            let identifier = contract_address.to_bytes_be();
+            let (root_hash, proof) = make_trie_proof(
+                block_n,
+                &mut starknet.backend.contract_storage_trie(),
+                StorageProofTrie::ContractStorage(contract_address),
+                &identifier,
+                storage_keys,
+            )?;
+            contract_root_hashes.insert(contract_address, root_hash);
+            Ok(proof)
+        })
+        .collect::<RpcResult<_>>()?;
+
     // contract leaves data
     let contract_leaves_data = contract_addresses
         .iter()
@@ -165,6 +184,9 @@ pub fn get_storage_proof(
                     .get_contract_class_hash_at(&DbBlockId::Number(block_n), contract_addr)
                     .or_internal_server_error("Getting contract class hash")?
                     .unwrap_or(Felt::ZERO),
+                storage_root: *contract_root_hashes
+                    .get(contract_addr)
+                    .unwrap_or(&Felt::ZERO),
             })
         })
         .collect::<RpcResult<_>>()?;
@@ -178,25 +200,138 @@ pub fn get_storage_proof(
 
     let contracts_proof = ContractsProof { nodes: contracts_proof_nodes, contract_leaves_data };
 
-    let contracts_storage_proofs = contracts_storage_keys
-        .into_iter()
-        .map(|ContractStorageKeysItem { contract_address, storage_keys }| {
-            let identifier = contract_address.to_bytes_be();
-            let (_root_hash, proof) = make_trie_proof(
-                block_n,
-                &mut starknet.backend.contract_storage_trie(),
-                StorageProofTrie::ContractStorage(contract_address),
-                &identifier,
-                storage_keys,
-            )?;
-            Ok(proof)
-        })
-        .collect::<RpcResult<_>>()?;
-
     Ok(GetStorageProofResult {
         classes_proof,
         contracts_proof,
         contracts_storage_proofs,
         global_roots: GlobalRoots { contracts_tree_root, classes_tree_root, block_hash },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use bitvec::{bits, vec::BitVec, view::{AsBits, BitView as _}};
+    use blockifier::execution::contract_address;
+    use mc_db::tests::common::finalized_block_one;
+    use mp_state_update::{ContractStorageDiffItem, StateDiff, StorageEntry};
+    use starknet_types_core::hash::{Pedersen, Poseidon};
+
+    use super::*;
+
+    use crate::test_utils::rpc_test_setup;
+    use mc_block_import::tests::block_import_utils::create_dummy_header;
+
+    #[test]
+    fn test_path_to_felt() {
+        let path = bits![u8, Msb0; 0, 0];
+        assert_eq!(path.len(), 2);
+        let felt = path_to_felt(path);
+        assert_eq!(felt, Felt::ZERO);
+
+        let path = bits![u8, Msb0; 1];
+        assert_eq!(path.len(), 1);
+        let felt = path_to_felt(path);
+        assert_eq!(felt, Felt::ONE);
+    }
+
+    #[tokio::test]
+    #[rstest::rstest]
+    #[case(vec![(Felt::TWO, Felt::ONE, Felt::THREE)])]
+    async fn test_contract_storage_trie_proof(
+        #[case] storage_items: Vec<(Felt, Felt, Felt)>,
+        rpc_test_setup: (std::sync::Arc<mc_db::MadaraBackend>, Starknet)
+    ) {
+        use std::collections::HashMap;
+
+        let (_backend, starknet) = rpc_test_setup;
+
+        let mut storage_trie = starknet.backend.contract_storage_trie();
+        let mut contract_storage: HashMap<Felt, Vec<(Felt, Felt)>> = HashMap::new();
+        let mut contract_addresses = Vec::new();
+        let mut contract_storage_keys: HashMap<Felt, Vec<Felt>> = HashMap::new();
+
+        // for each triplet (contract_address, storage_key, value) we insert the k:v pair into the
+        // bonsai trie for that contract and also prepare some other data we will use later
+        for (contract_address, storage_key, value) in storage_items {
+            storage_trie.insert(
+                &contract_address.to_bytes_be(),
+                &storage_key.to_bytes_be().as_bits()[5..].to_owned(),
+                &value,
+            ).unwrap();
+
+            // also use this to map out the k:v storage pairs for each contract we're proving
+            contract_storage.entry(contract_address).or_default().push((storage_key, value));
+
+            // prepare input for get_storage_proof
+            contract_addresses.push(contract_address);
+            contract_storage_keys.entry(contract_address).or_default().push(storage_key);
+
+        }
+        storage_trie.commit(BasicId::new(1));
+
+        // create a dummy block to make get_storage_proof() happy
+        // (it wants a block to exist for the requested chain height)
+        let header = create_dummy_header();
+        let pending_block = finalized_block_one();
+        starknet.backend.store_block(
+            pending_block,
+            StateDiff::default(),
+            vec![],
+            None,
+            None,
+        ).unwrap();
+
+        // convert contract_storage_keys to vec of ContractStorageKeyItems now that we have all keys
+        let contract_storage_keys = contract_storage_keys.into_iter().map(|(contract_address, storage_keys)| {
+            ContractStorageKeysItem { contract_address, storage_keys }
+        })
+        .collect();
+
+        let storage_proof_result = get_storage_proof(
+            &starknet,
+            BlockId::Tag(BlockTag::Latest),
+            None,
+            Some(contract_addresses),
+            Some(contract_storage_keys),
+        ).unwrap();
+
+        // the contract storage roots are buried in the unordered Vec<ContracTLeavesDataItem>, we need each
+        // root so we convert to a hash map
+        let storage_roots = storage_proof_result.contracts_proof.contract_leaves_data.into_iter().map(|contract_leaves_data_item| {
+            // TODO: do we not have the contract address in any way here?
+            //       class_hash is wrong here, we want the contract address!
+            (contract_leaves_data_item.class_hash, contract_leaves_data_item.storage_root)
+        })
+        .collect::<HashMap<_, _>>();
+
+        // for each contract we have a proof for, walk through the proof for all storage keys requested
+        for contract_address in contract_storage.keys() {
+            let storage_root = storage_roots
+                .get(contract_address)
+                .expect(format!("no proof returned for contract {:x}", contract_address).as_str());
+
+            verify_proofs().expect("verify_proofs failed");
+        }
+    }
+
+    // copied from bonsai-trie and modified to avoid unneeded types
+    pub fn hash_binary_node<H: StarkHash>(left_hash: Felt, right_hash: Felt) -> Felt {
+        H::hash(&left_hash, &right_hash)
+    }
+    pub fn hash_edge_node<H: StarkHash>(path: &Felt, path_length: usize, child_hash: Felt) -> Felt {
+        let path_bitslice: &BitSlice<_, Msb0> = &BitVec::from_slice(&path.to_bytes_be());
+        assert!(path_bitslice.len() == 256, "Felt::to_bytes_be() expected to always be 256 bits");
+
+        let felt_path = path;
+        let mut length = [0; 32];
+        // Safe as len() is guaranteed to be <= 251
+        length[31] = path_length as u8;
+
+        let length = Felt::from_bytes_be(&length);
+        H::hash(&child_hash, &felt_path) + length
+    }
+
+    pub fn verify_proofs() -> Result<(), ()> {
+        unimplemented!("fixme: verify_proofs");
+    }
 }

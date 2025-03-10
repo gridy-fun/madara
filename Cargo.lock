@@ -8895,6 +8895,7 @@ dependencies = [
  "blockifier",
  "jsonrpsee",
  "m-proc-macros",
+ "mc-block-import",
  "mc-db",
  "mc-exec",
  "mc-gateway-client",
