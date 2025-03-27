@@ -413,11 +413,6 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let mut spawned_bots: Vec<String> = Vec::new();
         let mut killed_bots: Vec<String> = Vec::new();
 
-        // events: [OrderedEvent { order: 0, event: EventContent { keys: [EventKey(0x2cd0383e81a65036ae8acc94ac89e891d1385ce01ae6cc127c27615f5420fa3)],
-        // data: EventData([0x7484e8e3af210b2ead47fa08c96f8d18b616169b350a8b75fe0dc4d2e01d493, 0x1c9, 0x66dbd884899534c3ba7216743e8d0a683e3c5b5b8cac37441f55c1b43a8019c]) } }],
-
-        // The logic below is written assuming that the event will have one key and 3 values.
-
         for tx in all_txns {
             if tx.is_err() {
                 continue;
@@ -473,6 +468,11 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                             bot_location,
                             bot_points
                         );
+                        self.backend
+                            .game_update_metadata(|meta| {
+                                meta.tiles_mined += 1;
+                            })
+                            .expect("could not update the tiles mined number");
                     }
                     // TileMined
                     else if key == EventKey(tile_mined_felt) {
@@ -485,18 +485,14 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                             location,
                             points
                         );
-                        self.backend
-                            .game_update_metadata(|meta| {
-                                meta.tiles_mined += 1;
-                            })
-                            .expect("could not update the tiles mined number");
+
                     }
                     // TileAlreadyMined
                     else if key == EventKey(tile_already_mined_felt) {
                         let bot_address = event.data.0[0].to_string();
                         let bot_location = event.data.0[1].to_string();
                         println!(
-                            ">>> Event : TileAlreadyMined {:?} at {:?}",
+                            ">>> Event : TileAlreadyMined by {:?} at {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             bot_location
                         );
@@ -507,7 +503,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                         let player = event.data.0[1].to_string();
                         let bot_location = event.data.0[2].to_string();
                         println!(
-                            ">>> Event : SpawnedBot {:?} at {:?} by {:?}",
+                            ">>> Event : SpawnedBot {:?} by {:?} at {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             bot_location,
                             Felt::from_str(player.as_str()).expect("Could not get address")
@@ -717,42 +713,59 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // =========================================================================================
         // Execute BOT transactions :
 
-        let game_width = env::var("MADARA_GAME_WIDTH").expect("MADARA_GAME_WIDTH not set").parse::<u64>().unwrap();
-        let game_height = env::var("MADARA_GAME_HEIGHT").expect("MADARA_GAME_HEIGHT not set").parse::<u64>().unwrap();
+        let game_total_diamonds = env::var("MADARA_GAME_TOTAL_DIAMONDS").expect("MADARA_GAME_TOTAL_DIAMONDS not set").parse::<u64>().unwrap();
+        let reset_madara_game_db = env::var("MADARA_GAME_RESET_DB").expect("MADARA_GAME_RESET_DB not set").parse::<bool>().unwrap();
 
-        let area = game_width * game_height;
+        if reset_madara_game_db {
+            println!("Resetting Game DB");
+            if game_total_diamonds == 0 {
+                println!("Resetting Game DB for sure");
+                self.backend
+                    .game_reset_metadata()
+                    .expect("could not update the tiles mined number");
+
+                let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
+                println!("Game DB reset successfully {:?}", game_metadata);
+
+                return Ok(false);
+            } else {
+                println!("Game total diamonds not zero! : {}", game_total_diamonds);
+            }
+        }
 
         let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
+        // list based on TPS
         let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
-        if game_metadata.tiles_mined < area && bot_addresses.len() > 0 {
-            println!(">>> Triggering bot transactions");
-            println!(">>> Current Tiles mined : {:?} vs total to be mined : {:?}", game_metadata.tiles_mined, area);
-            println!(">>> Current Total Bots : {:?}", bot_addresses.len());
-            let addresses_clone = bot_addresses.clone();
 
-            // let c = bot_addresses
-            //     .iter()
-            //     .map(|x| Felt::from_str(x).expect("could not convert string to felt"))
-            //     .collect::<Vec<_>>();
+        println!(">>> game total diamonds {}", game_total_diamonds);
+        println!(">>> game current diamonds mined {}", game_metadata.tiles_mined);
 
-            // println!(">>> DB bots list : {:?}", c);
-            // Do nothing if 0 bots to execute
-            if bot_addresses.is_empty() {
-                return Ok(false);
-            }
-            // TODO: check if game is active or not
-            // TODO: what is bot is disabled ?
+        println!(">>> bot addresses length || TPS {:?}", bot_addresses.len());
+        println!(">>> current active bots length {:?}", game_metadata.length);
 
-            let txns = self.generate_txns(addresses_clone);
-            println!(">>> Number of txns generated : {:?}", txns.len());
-            txns.iter().for_each(|txn| {
-                self.mempool.tx_accept_invoke(txn.clone()).expect("Unable to accept invoke tx");
-            });
-            // self.mempool.tx_accept_invoke(txn).expect("Unable to accept invoke tx");
-            println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
-
-            // =========================================================================================
+        if game_metadata.tiles_mined >= game_total_diamonds {
+            println!(">>> Game is over, diamonds mined: {:?} vs diamonds to be mined: {:?}", game_metadata.tiles_mined, game_total_diamonds);
+            return Ok(false);
         }
+        else if bot_addresses.is_empty() {
+            println!(">>> No bots to execute transactions");
+            return Ok(false);
+        }
+
+        println!(">>> Triggering bot transactions");
+        println!(">>> Current diamonds mined : {:?} vs total diamonds to be mined : {:?}", game_metadata.tiles_mined, game_total_diamonds);
+        println!(">>> Current Total Bots : {:?}", bot_addresses.len());
+        let addresses_clone = bot_addresses.clone();
+
+        let txns = self.generate_txns(addresses_clone);
+        println!(">>> Number of txns generated : {:?}", txns.len());
+        txns.iter().for_each(|txn| {
+            self.mempool.tx_accept_invoke(txn.clone()).expect("Unable to accept invoke tx");
+        });
+        // self.mempool.tx_accept_invoke(txn).expect("Unable to accept invoke tx");
+        println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
+
+        // =========================================================================================
 
         Ok(false)
     }

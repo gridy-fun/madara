@@ -11,14 +11,27 @@ pub struct AddressNode {
     previous: Option<String>, // Previous address in sequence
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ListMetadata {
-    game_address: String,
+    game_address: String,               // not being used
     head: Option<String>,               // First address
     tail: Option<String>,               // Last address
     pub next_iter_addr: Option<String>, // Next address for iterator
     pub length: u64,                    // Number of addresses in list
     pub tiles_mined: u64,               // Number of tiles mined
+}
+
+impl Default for ListMetadata {
+    fn default() -> Self {
+        ListMetadata {
+            game_address: String::new(),
+            head: None,
+            tail: None,
+            next_iter_addr: None,
+            length: 0,
+            tiles_mined: 0,
+        }
+    }
 }
 
 const METADATA_KEY: &[u8] = b"list_metadata";
@@ -49,6 +62,21 @@ impl MadaraBackend {
         updates(&mut metadata);
 
         // Serialize and write the updated metadata
+        let serialized = serde_json::to_vec(&metadata).unwrap();
+        batch.put_cf(&col, METADATA_KEY, serialized);
+
+        // Write the batch to the database
+        self.db.write(batch)?;
+
+        Ok(())
+    }
+
+    pub fn game_reset_metadata(&self) -> Result<(), rocksdb::Error> {
+        let col = self.db.get_column(Column::Game);
+        let mut batch = WriteBatch::default();
+
+        // Reset metadata to default
+        let metadata = ListMetadata::default();
         let serialized = serde_json::to_vec(&metadata).unwrap();
         batch.put_cf(&col, METADATA_KEY, serialized);
 

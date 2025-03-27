@@ -25,9 +25,9 @@ bouncer_config:
     n_steps: 40000000
     message_segment_length: 18446744073709551615
     n_events: 18446744073709551615
-    state_diff_size: 131072
+    state_diff_size: 4000
 sequencer_address: "0x123"
-eth_core_contract_address: "0x04d691c36acc730d2302d894c1b70aad3d97f09fdecef229301ee1b6832475f7"
+eth_core_contract_address: "0x60ee7746b6ae0aea09b0924482f1740c192d66b9952519b36eca21e99b3dcf1"
 eth_gps_statement_verifier: "0xf294781D719D2F4169cE54469C28908E6FA752C1"
 mempool_tx_limit: 10000
 mempool_declare_tx_limit: 20
