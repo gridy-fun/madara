@@ -858,23 +858,50 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     }
 
     fn generate_txns(&self, contract_addresses: Vec<String>) -> Vec<BroadcastedInvokeTxn> {
-        let x = env::var("MADARA_GAME_SEQUENCER_ADDRESS").unwrap();
-        let y = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEY").unwrap();
-        let z = env::var("MADARA_GAME_CONTRACT_ADDRESS").unwrap();
+        // Load sequencer addresses from environment
+        let sequencer_addresses_str = env::var("MADARA_GAME_SEQUENCER_ADDRESSES")
+            .expect("MADARA_GAME_SEQUENCER_ADDRESSES environment variable not set");
+        let sequencer_add: Vec<&str> = sequencer_addresses_str.split(',').collect();
 
-        let sequencer_address = Felt::from_hex(&x.as_str()).expect("Unable to extract public key from hex");
-        let sequencer_priv_key = Felt::from_hex(&y.as_str()).expect("Unable to extract priv key from hex");
-        let game_address = Felt::from_hex(&z.as_str()).expect("Unable to extract public key from hex");
+        // Convert addresses to Felt
+        let sequencer_addresses: Vec<Felt> = sequencer_add.iter()
+            .map(|hex_str| Felt::from_hex(hex_str.trim())
+            .expect("Invalid sequencer address hex format"))
+            .collect();
 
-        let signing_key = SigningKey::from_secret_scalar(sequencer_priv_key);
+        // Get nonces for each address
+        let nonces: Vec<Felt> = sequencer_addresses.iter()
+            .map(|address| {
+                self
+                    .backend
+                    .get_contract_nonce_at(&DbBlockId::Pending, address)
+                    .expect("Unable to fetch nonce from the block.")
+                    .unwrap_or(Felt::from(0))
+            })
+            .collect();
 
-        let nonce = self
-            .backend
-            .get_contract_nonce_at(&DbBlockId::Pending, &sequencer_address)
-            .expect("Unable to fetch nonce from the block.")
-            // if nonce is not found, use 0
-            .unwrap_or(Felt::from(0));
+        // Load private keys from environment
+        let sequencer_keys_str = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEYS")
+            .expect("MADARA_GAME_SEQUENCER_PRIVATE_KEYS environment variable not set");
+        let sequencer_pvt_key: Vec<&str> = sequencer_keys_str.split(',').collect();
 
+        // Convert private keys to Felt
+        let sequencer_prvt_keys: Vec<Felt> = sequencer_pvt_key.iter()
+            .map(|hex_str| Felt::from_hex(hex_str.trim())
+            .expect("Invalid private key hex format"))
+            .collect();
+
+        // Create signing keys
+        let signing_keys: Vec<SigningKey> = sequencer_prvt_keys.iter()
+            .map(|pvt_key| SigningKey::from_secret_scalar(*pvt_key))
+            .collect();
+
+        // Get game contract address
+        let game_address = env::var("MADARA_GAME_CONTRACT_ADDRESS")
+            .map(|addr| Felt::from_hex(addr.trim()).expect("Invalid game address format"))
+            .expect("MADARA_GAME_CONTRACT_ADDRESS environment variable not set");
+
+        // Create calls
         let mut call_vec = Vec::new();
         for address in contract_addresses {
             let random_seed: u64 = thread_rng().gen();
@@ -885,18 +912,18 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             })
         }
 
-        let txns = self.create_txns(sequencer_address, nonce, call_vec, signing_key);
-        txns
+        // Create transactions
+        self.create_txns(sequencer_addresses, nonces, call_vec, signing_keys)
     }
 
     fn create_txns(
         &self,
-        sequencer_address: Felt,
-        starting_nonce: Felt,
+        sequencer_address: Vec<Felt>,
+        starting_nonce: Vec<Felt>,
         call_vec: Vec<Call>,
-        signing_key: SigningKey,
+        signing_keys: Vec<SigningKey>,
     ) -> Vec<BroadcastedInvokeTxn> {
-        let mut internal_nonce = starting_nonce.clone().to_bigint();
+        let mut internal_nonce = starting_nonce.clone();
         let mut txns: Vec<BroadcastedInvokeTxn> = Vec::new();
         let max_fee = env::var("MADARA_GAME_MAX_FEE").unwrap();
 
@@ -908,23 +935,29 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let chunks: Vec<Vec<Call>> =
             call_vec.into_iter().collect::<Vec<_>>().chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
 
+        let mut index = 0;
+
+        let num_sequencers = sequencer_address.len();
+
         for chunk in chunks {
+            let curr_index = index % num_sequencers;
             let txn_internal = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
-                sender_address: sequencer_address,
+                sender_address: sequencer_address[curr_index],
                 calldata: Multicall::with_vec(chunk).flatten().collect(),
                 max_fee: Felt::from_str(max_fee.as_str()).unwrap(),
                 signature: vec![],
-                nonce: Felt::from(internal_nonce.clone()),
+                nonce: Felt::from(internal_nonce[curr_index]),
             }));
 
             let signed_transaction =
-                self.sign_tx(txn_internal, signing_key.clone()).expect("Not able to sign the transaction.");
+                self.sign_tx(txn_internal, signing_keys[curr_index].clone()).expect("Not able to sign the transaction.");
 
             let final_txn = match signed_transaction {
                 BroadcastedTxn::Invoke(tx) => tx,
                 _ => panic!("Invalid Txn"),
             };
-            internal_nonce += 1;
+            internal_nonce[curr_index] = internal_nonce[curr_index] + 1;
+            index += 1;
             txns.push(final_txn);
         }
         txns

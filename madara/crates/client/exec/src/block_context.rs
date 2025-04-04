@@ -1,7 +1,7 @@
 use crate::{blockifier_state_adapter::BlockifierStateAdapter, Error};
 use blockifier::{
     blockifier::{
-        config::TransactionExecutorConfig, stateful_validator::StatefulValidator,
+        config::{ConcurrencyConfig, TransactionExecutorConfig}, stateful_validator::StatefulValidator,
         transaction_executor::TransactionExecutor,
     },
     context::{BlockContext, ChainInfo, FeeTokenAddresses},
@@ -11,6 +11,7 @@ use mc_db::{db_block_id::DbBlockId, MadaraBackend};
 use mp_block::{header::L1DataAvailabilityMode, MadaraMaybePendingBlockInfo};
 use starknet_api::block::{BlockNumber, BlockTimestamp};
 use std::sync::Arc;
+use std::env;
 
 pub struct ExecutionContext {
     pub(crate) backend: Arc<MadaraBackend>,
@@ -19,13 +20,31 @@ pub struct ExecutionContext {
     pub(crate) latest_visible_block: Option<DbBlockId>,
 }
 
+
+
 impl ExecutionContext {
     pub fn tx_executor(&self) -> TransactionExecutor<BlockifierStateAdapter> {
+        dotenv::dotenv().ok();
+        let do_concurrent =  env::var("MADARA_GAME_CONCURRENCY_ENABLED").unwrap().parse::<bool>().unwrap_or(false);
+
+        let mut config = TransactionExecutorConfig { concurrency_config: Default::default() };
+
+
+        if do_concurrent {
+            let n_workers =  env::var("MADARA_GAME_CONCURRENCY_N_WORKERS").unwrap().parse::<usize>().unwrap_or(1);
+            let chunk_size =  env::var("MADARA_GAME_CONCURRENCY_CHUNK_SIZE").unwrap().parse::<usize>().unwrap_or(1);
+
+            config = TransactionExecutorConfig { concurrency_config: ConcurrencyConfig {
+                    enabled: true,
+                    n_workers: n_workers,
+                    chunk_size: chunk_size,
+                }}
+        }
+
         TransactionExecutor::new(
             self.init_cached_state(),
             self.block_context.clone(),
-            // No concurrency yet.
-            TransactionExecutorConfig { concurrency_config: Default::default() },
+            config,
         )
     }
 

@@ -8757,6 +8757,7 @@ version = "0.8.0"
 dependencies = [
  "blockifier",
  "cairo-vm",
+ "dotenv",
  "mc-db",
  "mp-block",
  "mp-chain-config",
