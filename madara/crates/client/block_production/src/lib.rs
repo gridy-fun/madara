@@ -696,6 +696,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             return Ok(true);
         }
 
+        let start_time_store = Instant::now();
+
         // Store pending block
         // todo, prefer using the block import pipeline?
         self.backend.store_block(
@@ -708,10 +710,14 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // do not forget to flush :)
         self.backend.flush().map_err(|err| BlockImportError::Internal(format!("DB flushing error: {err:#}").into()))?;
 
+        println!(">>> Time taken to run store_block: {:?}", start_time_store.elapsed().as_millis());
+
         // TODO: Measure the transactions time --------------------------------------------------
         // TODO: Do all of it inside a function
         // =========================================================================================
         // Execute BOT transactions :
+        //
+        let start_time_game = Instant::now();
 
         let game_total_diamonds = env::var("MADARA_GAME_TOTAL_DIAMONDS").expect("MADARA_GAME_TOTAL_DIAMONDS not set").parse::<u64>().unwrap();
         let reset_madara_game_db = env::var("MADARA_GAME_RESET_DB").expect("MADARA_GAME_RESET_DB not set").parse::<bool>().unwrap();
@@ -766,6 +772,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
 
         // =========================================================================================
+
+        println!(">>> Time taken to run game: {:?}", start_time_game.elapsed().as_millis());
 
         Ok(false)
     }
