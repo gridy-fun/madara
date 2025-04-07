@@ -310,14 +310,14 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             // Execute the transactions.
             let all_results = self.executor.execute_txs(&txs_to_process_blockifier);
 
-            // println!(">>> Execution returned with : {:?} within {:?} ", all_results.len(), end);
+            // tracing::info!(">>> Execution returned with : {:?} within {:?} ", all_results.len(), end);
 
-            // println!(">>> TXNS TO PROCESS BLOCKFIER :  {:?} ", txs_to_process_blockifier);
+            // tracing::info!(">>> TXNS TO PROCESS BLOCKFIER :  {:?} ", txs_to_process_blockifier);
 
             // let result: &Vec<Result<TransactionExecutionInfo, TransactionExecutorError>> = &all_results.as_ref();
             // let x = result.iter().map(|x| x.as_ref().unwrap()).collect::<Vec<&TransactionExecutionInfo>>()[0];
             // let n_steps = x.transaction_receipt.resources.vm_resources.n_steps;
-            // println!(">>> N_STEPS  {:?}", n_steps);
+            // tracing::info!(">>> N_STEPS  {:?}", n_steps);
 
             let _ress = self.listen_for_bot_events(&all_results).expect("Couldn't ingest Bot events");
 
@@ -450,7 +450,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                     if key == EventKey(bomb_found_felt) {
                         let bot_address = event.data.0[0].to_string();
                         let bot_location = event.data.0[1].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : BombFound by {:?} at {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             bot_location
@@ -462,7 +462,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                         let bot_address = event.data.0[0].to_string();
                         let bot_points = event.data.0[1].to_string();
                         let bot_location = event.data.0[2].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : DiamondFound by {:?} at {:?} for {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             bot_location,
@@ -479,7 +479,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                         let bot_address = event.data.0[0].to_string();
                         let points = event.data.0[1].to_string();
                         let location = event.data.0[2].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : TileMined by {:?} at {:?} for {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             location,
@@ -491,7 +491,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                     else if key == EventKey(tile_already_mined_felt) {
                         let bot_address = event.data.0[0].to_string();
                         let bot_location = event.data.0[1].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : TileAlreadyMined by {:?} at {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             bot_location
@@ -502,7 +502,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                         let bot_address = event.data.0[0].to_string();
                         let player = event.data.0[1].to_string();
                         let bot_location = event.data.0[2].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : SpawnedBot {:?} by {:?} at {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address"),
                             bot_location,
@@ -513,7 +513,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                     // SuspendBot
                     else if key == EventKey(suspend_bot_felt) {
                         let bot_address = event.data.0[0].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : SuspendBot {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address")
                         );
@@ -522,7 +522,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                     // ReviveBot
                     else if key == EventKey(revive_bot_felt) {
                         let bot_address = event.data.0[0].to_string();
-                        println!(
+                        tracing::info!(
                             ">>> Event : ReviveBot {:?}",
                             Felt::from_str(bot_address.as_str()).expect("Could not get address")
                         );
@@ -710,7 +710,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // do not forget to flush :)
         self.backend.flush().map_err(|err| BlockImportError::Internal(format!("DB flushing error: {err:#}").into()))?;
 
-        println!(">>> Time taken to run store_block: {:?}", start_time_store.elapsed().as_millis());
+        tracing::info!(">>> Time taken to run store_block: {:?}", start_time_store.elapsed().as_millis());
 
         // TODO: Measure the transactions time --------------------------------------------------
         // TODO: Do all of it inside a function
@@ -723,57 +723,67 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let reset_madara_game_db = env::var("MADARA_GAME_RESET_DB").expect("MADARA_GAME_RESET_DB not set").parse::<bool>().unwrap();
 
         if reset_madara_game_db {
-            println!("Resetting Game DB");
+            tracing::info!("Resetting Game DB");
             if game_total_diamonds == 0 {
-                println!("Resetting Game DB for sure");
+                tracing::info!("Resetting Game DB for sure");
                 self.backend
                     .game_reset_metadata()
                     .expect("could not update the tiles mined number");
 
                 let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
-                println!("Game DB reset successfully {:?}", game_metadata);
+                tracing::info!("Game DB reset successfully {:?}", game_metadata);
 
                 return Ok(false);
             } else {
-                println!("Game total diamonds not zero! : {}", game_total_diamonds);
+                tracing::info!("Game total diamonds not zero! : {}", game_total_diamonds);
             }
         }
 
+        let start_time_get_game_metadata = Instant::now();
         let game_metadata = self.backend.game_get_metadata().expect("Unable to fetch last start index");
+        tracing::info!(">>> Time taken to get game_metadata : {:?}", start_time_get_game_metadata.elapsed().as_millis());
         // list based on TPS
+        let start_time_get_bot_addresses = Instant::now();
         let bot_addresses = self.backend.game_get_bots_list().expect("Could not get bots' list");
+        tracing::info!(">>> Time taken to get bot_addresses : {:?}", start_time_get_bot_addresses.elapsed().as_millis());
 
-        println!(">>> game total diamonds {}", game_total_diamonds);
-        println!(">>> game current diamonds mined {}", game_metadata.tiles_mined);
+        tracing::info!(">>> game total diamonds {}", game_total_diamonds);
+        tracing::info!(">>> game current diamonds mined {}", game_metadata.tiles_mined);
 
-        println!(">>> bot addresses length || TPS {:?}", bot_addresses.len());
-        println!(">>> current active bots length {:?}", game_metadata.length);
+        tracing::info!(">>> bot addresses length || TPS {:?}", bot_addresses.len());
+        tracing::info!(">>> current active bots length {:?}", game_metadata.length);
 
         if game_metadata.tiles_mined >= game_total_diamonds {
-            println!(">>> Game is over, diamonds mined: {:?} vs diamonds to be mined: {:?}", game_metadata.tiles_mined, game_total_diamonds);
+            tracing::info!(">>> Game is over, diamonds mined: {:?} vs diamonds to be mined: {:?}", game_metadata.tiles_mined, game_total_diamonds);
             return Ok(false);
         }
         else if bot_addresses.is_empty() {
-            println!(">>> No bots to execute transactions");
+            tracing::info!(">>> No bots to execute transactions");
             return Ok(false);
         }
 
-        println!(">>> Triggering bot transactions");
-        println!(">>> Current diamonds mined : {:?} vs total diamonds to be mined : {:?}", game_metadata.tiles_mined, game_total_diamonds);
-        println!(">>> Current Total Bots : {:?}", bot_addresses.len());
+        tracing::info!(">>> Triggering bot transactions");
+        tracing::info!(">>> Current diamonds mined : {:?} vs total diamonds to be mined : {:?}", game_metadata.tiles_mined, game_total_diamonds);
+        tracing::info!(">>> Current Total Bots : {:?}", bot_addresses.len());
         let addresses_clone = bot_addresses.clone();
 
+        let start_time_generate_txns = Instant::now();
         let txns = self.generate_txns(addresses_clone);
-        println!(">>> Number of txns generated : {:?}", txns.len());
+        tracing::info!(">>> Time taken to generate txns : {:?}", start_time_generate_txns.elapsed().as_millis());
+
+        tracing::info!(">>> Number of txns generated : {:?}", txns.len());
+
+        let start_time_accept_invoke_txns = Instant::now();
         txns.iter().for_each(|txn| {
             self.mempool.tx_accept_invoke(txn.clone()).expect("Unable to accept invoke tx");
         });
+        tracing::info!(">>> Time taken to accept invoke txns : {:?}", start_time_accept_invoke_txns.elapsed().as_millis());
         // self.mempool.tx_accept_invoke(txn).expect("Unable to accept invoke tx");
-        println!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
+        tracing::info!(">>> Time taken to run on_pending_tick: {:?}", start.elapsed().as_millis());
 
         // =========================================================================================
 
-        println!(">>> Time taken to run game: {:?}", start_time_game.elapsed().as_millis());
+        tracing::info!(">>> Time taken to run game: {:?}", start_time_game.elapsed().as_millis());
 
         Ok(false)
     }
@@ -866,7 +876,10 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     }
 
     fn generate_txns(&self, contract_addresses: Vec<String>) -> Vec<BroadcastedInvokeTxn> {
+        let start_time_overall = Instant::now();
+
         // Load sequencer addresses from environment
+        let start_time_load_addresses = Instant::now();
         let sequencer_addresses_str = env::var("MADARA_GAME_SEQUENCER_ADDRESSES")
             .expect("MADARA_GAME_SEQUENCER_ADDRESSES environment variable not set");
         let sequencer_add: Vec<&str> = sequencer_addresses_str.split(',').collect();
@@ -876,8 +889,10 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             .map(|hex_str| Felt::from_hex(hex_str.trim())
             .expect("Invalid sequencer address hex format"))
             .collect();
+        tracing::info!(">>> Time taken to load and parse addresses: {:?}", start_time_load_addresses.elapsed().as_millis());
 
         // Get nonces for each address
+        let start_time_get_nonces = Instant::now();
         let nonces: Vec<Felt> = sequencer_addresses.iter()
             .map(|address| {
                 self
@@ -887,8 +902,10 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                     .unwrap_or(Felt::from(0))
             })
             .collect();
+        tracing::info!(">>> Time taken to get nonces: {:?}", start_time_get_nonces.elapsed().as_millis());
 
         // Load private keys from environment
+        let start_time_load_keys = Instant::now();
         let sequencer_keys_str = env::var("MADARA_GAME_SEQUENCER_PRIVATE_KEYS")
             .expect("MADARA_GAME_SEQUENCER_PRIVATE_KEYS environment variable not set");
         let sequencer_pvt_key: Vec<&str> = sequencer_keys_str.split(',').collect();
@@ -903,13 +920,17 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         let signing_keys: Vec<SigningKey> = sequencer_prvt_keys.iter()
             .map(|pvt_key| SigningKey::from_secret_scalar(*pvt_key))
             .collect();
+        tracing::info!(">>> Time taken to load and process keys: {:?}", start_time_load_keys.elapsed().as_millis());
 
         // Get game contract address
+        let start_time_get_game_address = Instant::now();
         let game_address = env::var("MADARA_GAME_CONTRACT_ADDRESS")
             .map(|addr| Felt::from_hex(addr.trim()).expect("Invalid game address format"))
             .expect("MADARA_GAME_CONTRACT_ADDRESS environment variable not set");
+        tracing::info!(">>> Time taken to get game address: {:?}", start_time_get_game_address.elapsed().as_millis());
 
         // Create calls
+        let start_time_create_calls = Instant::now();
         let mut call_vec = Vec::new();
         for address in contract_addresses {
             let random_seed: u64 = thread_rng().gen();
@@ -919,9 +940,16 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
                 calldata: vec![Felt::from_str(&address).unwrap(), Felt::from(random_seed)],
             })
         }
+        tracing::info!(">>> Time taken to create calls: {:?}", start_time_create_calls.elapsed().as_millis());
 
         // Create transactions
-        self.create_txns(sequencer_addresses, nonces, call_vec, signing_keys)
+        let start_time_create_txns = Instant::now();
+        let txns = self.create_txns(sequencer_addresses, nonces, call_vec, signing_keys);
+        tracing::info!(">>> Time taken to create transactions: {:?}", start_time_create_txns.elapsed().as_millis());
+
+        tracing::info!(">>> Total time taken in generate_txns: {:?}", start_time_overall.elapsed().as_millis());
+
+        txns
     }
 
     fn create_txns(
@@ -931,34 +959,52 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         call_vec: Vec<Call>,
         signing_keys: Vec<SigningKey>,
     ) -> Vec<BroadcastedInvokeTxn> {
+        let start_time_overall = Instant::now();
+
         let mut internal_nonce = starting_nonce.clone();
         let mut txns: Vec<BroadcastedInvokeTxn> = Vec::new();
+
+        let start_time_env_vars = Instant::now();
         let max_fee = env::var("MADARA_GAME_MAX_FEE").unwrap();
 
         let chunk_size = env::var("MADARA_GAME_MULTICALL_CHUNK_SIZE")
             .expect("MADARA_GAME_MULTICALL_CHUNK_SIZE not set")
             .parse::<usize>()
             .unwrap();
+        tracing::info!(">>> Time taken to load environment variables: {:?}", start_time_env_vars.elapsed().as_millis());
+
         // Convert the original Vec into an iterator of chunks and collect each chunk into a Vec
+        let start_time_chunking = Instant::now();
         let chunks: Vec<Vec<Call>> =
             call_vec.into_iter().collect::<Vec<_>>().chunks(chunk_size).map(|chunk| chunk.to_vec()).collect();
+        tracing::info!(">>> Time taken to chunk calls: {:?}", start_time_chunking.elapsed().as_millis());
 
         let mut index = 0;
-
         let num_sequencers = sequencer_address.len();
 
-        for chunk in chunks {
+        let start_time_tx_creation = Instant::now();
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            let tx_start_time = Instant::now();
             let curr_index = index % num_sequencers;
+
+            let start_time_multicall = Instant::now();
+            let multicall_data = Multicall::with_vec(chunk.clone()).flatten().collect();
+            tracing::info!(">>> Time taken for multicall flattening (chunk {}): {:?}",
+                         chunk_idx, start_time_multicall.elapsed().as_millis());
+
             let txn_internal = BroadcastedTxn::Invoke(BroadcastedInvokeTxn::V1(InvokeTxnV1 {
                 sender_address: sequencer_address[curr_index],
-                calldata: Multicall::with_vec(chunk).flatten().collect(),
+                calldata: multicall_data,
                 max_fee: Felt::from_str(max_fee.as_str()).unwrap(),
                 signature: vec![],
                 nonce: Felt::from(internal_nonce[curr_index]),
             }));
 
+            let start_time_signing = Instant::now();
             let signed_transaction =
                 self.sign_tx(txn_internal, signing_keys[curr_index].clone()).expect("Not able to sign the transaction.");
+            tracing::info!(">>> Time taken to sign transaction (chunk {}): {:?}",
+                         chunk_idx, start_time_signing.elapsed().as_millis());
 
             let final_txn = match signed_transaction {
                 BroadcastedTxn::Invoke(tx) => tx,
@@ -967,7 +1013,15 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             internal_nonce[curr_index] = internal_nonce[curr_index] + 1;
             index += 1;
             txns.push(final_txn);
+
+            tracing::info!(">>> Total time for processing chunk {}: {:?}",
+                         chunk_idx, tx_start_time.elapsed().as_millis());
         }
+        tracing::info!(">>> Time taken for all transaction creation and signing: {:?}",
+                     start_time_tx_creation.elapsed().as_millis());
+
+        tracing::info!(">>> Total time taken in create_txns: {:?}", start_time_overall.elapsed().as_millis());
+
         txns
     }
 
