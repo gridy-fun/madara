@@ -172,7 +172,8 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             .map(|block| MadaraPendingBlock::try_from(block).expect("Ready block stored in place of pending"))
             .expect("Checked above");
 
-        let pending_state_diff = backend.get_pending_block_state_update().map_err(err_pending_state_diff)?;
+
+        let mut pending_state_diff = backend.get_pending_block_state_update().map_err(err_pending_state_diff)?;
         let pending_visited_segments =
             backend.get_pending_block_segments().map_err(err_pending_visited_segments)?.unwrap_or_default();
 
@@ -202,6 +203,10 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
 
         let block_n = backend.get_latest_block_n().map_err(err_latest_block_n)?.map(|n| n + 1).unwrap_or(0);
         let n_txs = pending_block.inner.transactions.len();
+
+        Self::update_block_hash_registry(backend, &mut pending_state_diff, block_n).map_err(|err| {
+            format!("Failed to update block hash registry: {err:#}")
+        })?;
 
         // Close and import the pending block
         close_block(
@@ -635,11 +640,10 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
     /// (https://docs.starknet.io/architecture-and-concepts/network-architecture/starknet-state/#address_0x1)
     ///
     /// It is also required by SNOS for PIEs creation of the block.
-    fn update_block_hash_registry(&self, state_diff: &mut StateDiff, block_n: u64) -> Result<(), Error> {
+    fn update_block_hash_registry( backend: &MadaraBackend, state_diff: &mut StateDiff, block_n: u64) -> Result<(), Error> {
         if block_n >= 10 {
             let prev_block_number = block_n - 10;
-            let prev_block_hash = self
-                .backend
+            let prev_block_hash = backend
                 .get_block_hash(&BlockId::Number(prev_block_number))
                 .map_err(|err| {
                     Error::Unexpected(
@@ -689,7 +693,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
         // Check if block is full
         if block_now_full {
             let block_n = self.block_n();
-            self.update_block_hash_registry(&mut new_state_diff, block_n)?;
+            Self::update_block_hash_registry(&self.backend, &mut new_state_diff, block_n)?;
 
             tracing::info!("Resource limits reached, closing block early");
             self.close_and_prepare_next_block(new_state_diff, visited_segments, start_time).await?;
@@ -804,7 +808,7 @@ impl<Mempool: MempoolProvider> BlockProductionTask<Mempool> {
             block_now_full: _block_now_full,
         } = self.continue_block(self.backend.chain_config().bouncer_config.block_max_capacity)?;
 
-        self.update_block_hash_registry(&mut new_state_diff, block_n)?;
+        Self::update_block_hash_registry(&self.backend, &mut new_state_diff, block_n)?;
 
         self.close_and_prepare_next_block(new_state_diff, visited_segments, start_time).await
     }
