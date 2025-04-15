@@ -184,7 +184,9 @@ starknet-types-core = { version = "0.1.7", default-features = false, features = 
 blockifier = { git = "https://github.com/byteZorvin/sequencer", branch = "madara-monorepo", features = [
     "testing",
 ] }
-starknet_api = "=0.13.0-rc.1"
+starknet_api = { git = "https://github.com/byteZorvin/sequencer", branch = "madara-monorepo", features = [
+    "testing",
+] }
 cairo-lang-starknet-classes = "=2.8.4"
 cairo-lang-utils = "=2.8.4"
 
